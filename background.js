@@ -29,6 +29,9 @@ class MeetingNotesProcessor {
         case 'getNotionPages':
           this.getNotionPages().then(sendResponse);
           return true; // Keep message channel open for async response
+        case 'getNotionDatabases':
+          this.getNotionDatabases().then(sendResponse);
+          return true; // Keep message channel open for async response
         case 'appendToNotionPage':
           this.appendToNotionPage(request.pageId, request.notes).then(sendResponse);
           return true; // Keep message channel open for async response
@@ -188,6 +191,47 @@ class MeetingNotesProcessor {
     } catch (error) {
       console.error('Error fetching Notion pages:', error);
       await this.addLog('error', 'Fetching Notion pages failed', { error: String(error) });
+      return { success: false, error: error.message };
+    }
+  }
+
+  async getNotionDatabases() {
+    try {
+      await this.addLog('info', 'Fetching Notion databases');
+      const config = await chrome.storage.sync.get(['notionToken']);
+      
+      if (!config.notionToken) {
+        throw new Error('Notion token not configured');
+      }
+
+      const response = await fetch('https://api.notion.com/v1/search', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${config.notionToken}`,
+          'Notion-Version': '2022-06-28',
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          filter: {
+            property: 'object',
+            value: 'database'
+          },
+          page_size: 100
+        })
+      });
+
+      if (!response.ok) {
+        await this.addLog('error', 'Notion search failed', { status: response.status });
+        throw new Error(`Notion API error: ${response.status}`);
+      }
+
+      const data = await response.json();
+      await this.addLog('info', 'Fetched Notion databases', { count: data.results?.length || 0 });
+      return { success: true, databases: data.results };
+      
+    } catch (error) {
+      console.error('Error fetching Notion databases:', error);
+      await this.addLog('error', 'Fetching Notion databases failed', { error: String(error) });
       return { success: false, error: error.message };
     }
   }

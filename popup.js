@@ -2,7 +2,8 @@
 document.addEventListener('DOMContentLoaded', function() {
   const geminiApiKeyInput = document.getElementById('geminiApiKey');
   const notionTokenInput = document.getElementById('notionToken');
-  const notionDatabaseIdInput = document.getElementById('notionDatabaseId');
+  const notionDatabaseSelect = document.getElementById('notionDatabaseSelect');
+  const loadDatabasesBtn = document.getElementById('loadDatabases');
   const saveConfigBtn = document.getElementById('saveConfig');
   const testConnectionBtn = document.getElementById('testConnection');
   const startNoteTakingBtn = document.getElementById('startNoteTaking');
@@ -30,6 +31,7 @@ document.addEventListener('DOMContentLoaded', function() {
   loadConfig();
 
   // Event listeners
+  loadDatabasesBtn.addEventListener('click', loadNotionDatabases);
   saveConfigBtn.addEventListener('click', saveConfig);
   testConnectionBtn.addEventListener('click', testConnection);
   startNoteTakingBtn.addEventListener('click', startNoteTaking);
@@ -50,10 +52,12 @@ document.addEventListener('DOMContentLoaded', function() {
 
   async function loadConfig() {
     try {
-      const config = await chrome.storage.sync.get(['geminiApiKey', 'notionToken', 'notionDatabaseId', 'defaultNotionPageId', 'defaultNotionPageTitle', 'debugEnabled']);
+      const config = await chrome.storage.sync.get(['geminiApiKey', 'notionToken', 'notionDatabaseId', 'notionDatabaseTitle', 'defaultNotionPageId', 'defaultNotionPageTitle', 'debugEnabled']);
       geminiApiKeyInput.value = config.geminiApiKey || '';
       notionTokenInput.value = config.notionToken || '';
-      notionDatabaseIdInput.value = config.notionDatabaseId || '';
+      if (config.notionDatabaseId && config.notionDatabaseTitle) {
+        notionDatabaseSelect.innerHTML = `<option value="${config.notionDatabaseId}">${config.notionDatabaseTitle}</option>`;
+      }
       if (config.defaultNotionPageId && config.defaultNotionPageTitle) {
         notionPageSelect.innerHTML = `<option value="${config.defaultNotionPageId}">${config.defaultNotionPageTitle}</option>`;
       }
@@ -70,14 +74,18 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   async function saveConfig() {
+    const databaseId = notionDatabaseSelect.value.trim();
+    const databaseTitle = notionDatabaseSelect.options[notionDatabaseSelect.selectedIndex]?.text || '';
+    
     const config = {
       geminiApiKey: geminiApiKeyInput.value.trim(),
       notionToken: notionTokenInput.value.trim(),
-      notionDatabaseId: notionDatabaseIdInput.value.trim()
+      notionDatabaseId: databaseId,
+      notionDatabaseTitle: databaseTitle
     };
 
     if (!config.geminiApiKey || !config.notionToken || !config.notionDatabaseId) {
-      showStatus('Please fill in all configuration fields', 'error');
+      showStatus('Please fill in all configuration fields and select a database', 'error');
       return;
     }
 
@@ -87,6 +95,33 @@ document.addEventListener('DOMContentLoaded', function() {
       updateButtonStates();
     } catch (error) {
       showStatus('Error saving configuration', 'error');
+    }
+  }
+
+  async function loadNotionDatabases() {
+    try {
+      const { notionToken } = await chrome.storage.sync.get(['notionToken']);
+      if (!notionToken) {
+        showStatus('Configure Notion token first', 'error');
+        return;
+      }
+
+      const resp = await chrome.runtime.sendMessage({ action: 'getNotionDatabases' });
+      if (!resp || !resp.success) throw new Error(resp?.error || 'Failed to fetch databases');
+      
+      notionDatabaseSelect.innerHTML = '<option value="">— Select a database —</option>';
+      
+      resp.databases.forEach(database => {
+        const title = database.title?.[0]?.text?.content || database.title?.[0]?.plain_text || 'Untitled Database';
+        const option = document.createElement('option');
+        option.value = database.id;
+        option.textContent = title;
+        notionDatabaseSelect.appendChild(option);
+      });
+      
+      showStatus('Databases loaded successfully', 'success');
+    } catch (e) {
+      showStatus(`Error loading databases: ${e.message}`, 'error');
     }
   }
 
@@ -162,7 +197,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const config = await chrome.storage.sync.get(['geminiApiKey', 'notionToken', 'notionDatabaseId']);
     
     if (!config.geminiApiKey || !config.notionToken || !config.notionDatabaseId) {
-      showStatus('Please configure API keys first', 'error');
+      showStatus('Please configure API keys and select a database first', 'error');
       return;
     }
 
@@ -321,7 +356,7 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   function updateButtonStates() {
-    const hasConfig = geminiApiKeyInput.value && notionTokenInput.value && notionDatabaseIdInput.value;
+    const hasConfig = geminiApiKeyInput.value && notionTokenInput.value && notionDatabaseSelect.value;
     const isInMeeting = meetingStatus.classList.contains('active');
     
     testConnectionBtn.disabled = !hasConfig;
@@ -346,7 +381,8 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   // Update button states when inputs change
-  [geminiApiKeyInput, notionTokenInput, notionDatabaseIdInput].forEach(input => {
+  [geminiApiKeyInput, notionTokenInput, notionDatabaseSelect].forEach(input => {
     input.addEventListener('input', updateButtonStates);
+    input.addEventListener('change', updateButtonStates);
   });
 });

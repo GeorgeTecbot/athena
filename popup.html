@@ -142,11 +142,14 @@
     </div>
 
     <div class="input-group">
-      <label for="notionDatabaseId">Notion Database ID</label>
-      <input type="text" id="notionDatabaseId" placeholder="Enter your Notion database ID">
+      <label for="notionDatabaseSelect">Notion Database</label>
+      <select id="notionDatabaseSelect" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px;">
+        <option value="">— Load databases to choose —</option>
+      </select>
     </div>
 
     <div style="display:flex; gap:10px;">
+      <button id="loadDatabases" class="button" style="flex:1;">Load Databases</button>
       <button id="saveConfig" class="button" style="flex:1;">Save Configuration</button>
       <button id="testConnection" class="button" style="flex:1;">Test Connection</button>
     </div>
