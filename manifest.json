@@ -1,0 +1,46 @@
+{
+  "manifest_version": 3,
+  "name": "Athena",
+  "version": "1.0",
+  "description": "Automatically take meeting notes using Gemini AI and append to Notion pages",
+  "permissions": [
+    "activeTab",
+    "storage",
+    "tabs",
+    "scripting",
+    "identity"
+  ],
+  "host_permissions": [
+    "https://meet.google.com/*",
+    "https://zoom.us/*",
+    "https://teams.microsoft.com/*",
+    "https://teams.live.com/*",
+    "https://api.notion.com/*",
+    "https://generativelanguage.googleapis.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://meet.google.com/*",
+        "https://zoom.us/*",
+        "https://teams.microsoft.com/*",
+        "https://teams.live.com/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Athena"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["modal.html", "styles.css"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}
