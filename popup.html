@@ -104,6 +104,11 @@
       color: #721c24;
       border: 1px solid #f5c6cb;
     }
+    .status.info {
+      background: #d1ecf1;
+      color: #0c5460;
+      border: 1px solid #bee5eb;
+    }
     .meeting-status {
       text-align: center;
       padding: 15px;
@@ -118,95 +123,119 @@
   </style>
 </head>
 <body>
-  <div class="header">
-    <h2>Athena</h2>
-    <button id="settingsBtn" class="settings-btn" title="Settings">⚙️</button>
-  </div>
 
-  <div class="meeting-status" id="meetingStatus">
-    <div>No active meeting detected</div>
-  </div>
-
-  <!-- Settings Panel (hidden by default) -->
-  <div id="settingsPanel" class="settings-panel" style="display: none;">
-    <h3>Settings</h3>
-    
-    <div class="input-group">
-      <label for="geminiApiKey">Gemini API Key</label>
-      <input type="password" id="geminiApiKey" placeholder="Enter your Gemini API key">
+  <!-- Settings View (hidden by default) -->
+  <div id="settingsView" style="display: none;">
+    <div class="header">
+      <h2>Settings</h2>
+      <button id="backBtn" class="settings-btn" title="Back to Main">←</button>
     </div>
 
-    <div class="input-group">
-      <label for="notionToken">Notion Integration Token</label>
-      <input type="password" id="notionToken" placeholder="Enter your Notion integration token">
-    </div>
-
-    <div class="input-group">
-      <label for="notionDatabaseSelect">Notion Database</label>
-      <select id="notionDatabaseSelect" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px;">
-        <option value="">— Load databases to choose —</option>
-      </select>
-    </div>
-
-    <div style="display:flex; gap:10px;">
-      <button id="loadDatabases" class="button" style="flex:1;">Load Databases</button>
-      <button id="saveConfig" class="button" style="flex:1;">Save Configuration</button>
-      <button id="testConnection" class="button" style="flex:1;">Test Connection</button>
-    </div>
-  </div>
-
-  <div class="config-section">
-    <h3>Default Notion Page</h3>
-
-    <div class="input-group">
-      <label for="notionPageSelect">Choose a page to auto-append notes</label>
-      <select id="notionPageSelect" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px;">
-        <option value="">— Load pages to choose —</option>
-      </select>
-    </div>
-
-    <div style="display:flex; gap:10px;">
-      <button id="loadNotionPages" class="button" style="flex:1;">Load Pages</button>
-      <button id="saveDefaultPage" class="button" style="flex:1;">Save Default</button>
-      <button id="clearDefaultPage" class="button" style="flex:1; background:#6c757d;">Clear</button>
-      <button id="addNewNote" class="button" style="flex:1; background:#17a2b8;">Add New Note</button>
-    </div>
-
-    <div id="defaultPageStatus" class="status" style="display:none; margin-top:10px;"></div>
-  </div>
-
-  <div class="config-section">
-    <h3>Actions</h3>
-    <div style="display: flex; gap: 10px;">
-      <button id="startNoteTaking" class="button button-start" disabled>▶️ Start Note Taking</button>
-      <button id="stopNoteTaking" class="button button-stop" disabled>⏹️ Stop Note Taking</button>
-    </div>
-  </div>
-
-  <div class="config-section">
-    <h3>Debug</h3>
-    <div class="input-group" style="display:flex;align-items:center;gap:10px;">
-      <label for="debugToggle" style="margin:0;">Enable debug logging</label>
-      <input type="checkbox" id="debugToggle" />
-      <button id="refreshLogs" class="button" style="margin-left:auto;flex:0 0 auto;width:auto;padding:8px 12px;">Refresh</button>
-      <button id="clearLogs" class="button" style="flex:0 0 auto;width:auto;padding:8px 12px;background:#6c757d;">Clear</button>
-    </div>
-    <div id="logs" style="height:180px;overflow:auto;border:1px solid #ddd;border-radius:4px;padding:8px;font-family:Menlo,Consolas,monospace;font-size:11px;background:#fafafa;"></div>
-  </div>
-
-  <div id="status" class="status" style="display: none;"></div>
-
-  <!-- New Note Modal -->
-  <div id="newNoteModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.4); z-index:9999; align-items:center; justify-content:center;">
-    <div style="background:#fff; padding:20px; border-radius:8px; width:320px; box-shadow:0 10px 30px rgba(0,0,0,0.2); font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
-      <h3 style="margin:0 0 10px 0; font-size:16px;">Create New Note</h3>
+    <div class="settings-panel">
+      <h3>API Configuration</h3>
+      
       <div class="input-group">
-        <label for="newNoteTitle">Note title</label>
-        <input type="text" id="newNoteTitle" placeholder="e.g. Client XYZ main note" />
+        <label for="geminiApiKey">Gemini API Key</label>
+        <input type="password" id="geminiApiKey" placeholder="Enter your Gemini API key">
       </div>
-      <div style="display:flex; gap:10px; justify-content:flex-end;">
-        <button id="cancelNewNote" class="button" style="background:#6c757d; width:auto; padding:8px 12px;">Cancel</button>
-        <button id="createNewNote" class="button" style="background:#17a2b8; width:auto; padding:8px 12px;">Create</button>
+
+      <div class="input-group">
+        <label for="notionToken">Notion Integration Token</label>
+        <input type="password" id="notionToken" placeholder="Enter your Notion integration token">
+      </div>
+
+      <div style="display:flex; gap:10px;">
+        <button id="testConnection" class="button" style="flex:1;">Test Connection</button>
+        <button id="saveConfig" class="button" style="flex:1;" disabled>Save Configuration</button>
+      </div>
+      
+      <div id="connectionStatus" class="status" style="display:none; margin-top:10px;"></div>
+    </div>
+  </div>
+
+  <!-- Main View -->
+  <div id="mainView">
+    <div class="header">
+      <h2>Athena</h2>
+      <button id="settingsBtn" class="settings-btn" title="Settings">⚙️</button>
+    </div>
+
+    <div class="meeting-status" id="meetingStatus">
+      <div>No active meeting detected</div>
+    </div>
+
+    <!-- Database Selection Panel (hidden by default) -->
+    <div id="databasePanel" class="settings-panel" style="display: none;">
+      <h3>Database Selection</h3>
+      
+      <div class="input-group">
+        <label for="notionDatabaseSelect">Select Notion Database</label>
+        <select id="notionDatabaseSelect" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px;">
+          <option value="">— Load databases to choose —</option>
+        </select>
+      </div>
+
+      <div style="display:flex; gap:10px;">
+        <button id="loadDatabases" class="button" style="flex:1;">Load Databases</button>
+        <button id="saveDatabase" class="button" style="flex:1;" disabled>Save Database</button>
+      </div>
+      
+      <div id="databaseStatus" class="status" style="display:none; margin-top:10px;"></div>
+    </div>
+
+    <div class="config-section">
+      <h3>Default Notion Page</h3>
+
+      <div class="input-group">
+        <label for="notionPageSelect">Choose a page to auto-append notes</label>
+        <select id="notionPageSelect" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px;">
+          <option value="">— Load pages to choose —</option>
+        </select>
+      </div>
+
+      <div style="display:flex; gap:10px;">
+        <button id="loadNotionPages" class="button" style="flex:1;">Load Pages</button>
+        <button id="saveDefaultPage" class="button" style="flex:1;">Save Default</button>
+        <button id="clearDefaultPage" class="button" style="flex:1; background:#6c757d;">Clear</button>
+        <button id="addNewNote" class="button" style="flex:1; background:#17a2b8;">Add New Note</button>
+      </div>
+
+      <div id="defaultPageStatus" class="status" style="display:none; margin-top:10px;"></div>
+    </div>
+
+    <div class="config-section">
+      <h3>Actions</h3>
+      <div style="display: flex; gap: 10px;">
+        <button id="startNoteTaking" class="button button-start" disabled>▶️ Start Note Taking</button>
+        <button id="stopNoteTaking" class="button button-stop" disabled>⏹️ Stop Note Taking</button>
+      </div>
+    </div>
+
+    <div class="config-section">
+      <h3>Debug</h3>
+      <div class="input-group" style="display:flex;align-items:center;gap:10px;">
+        <label for="debugToggle" style="margin:0;">Enable debug logging</label>
+        <input type="checkbox" id="debugToggle" />
+        <button id="refreshLogs" class="button" style="margin-left:auto;flex:0 0 auto;width:auto;padding:8px 12px;">Refresh</button>
+        <button id="clearLogs" class="button" style="flex:0 0 auto;width:auto;padding:8px 12px;background:#6c757d;">Clear</button>
+      </div>
+      <div id="logs" style="height:180px;overflow:auto;border:1px solid #ddd;border-radius:4px;padding:8px;font-family:Menlo,Consolas,monospace;font-size:11px;background:#fafafa;"></div>
+    </div>
+
+    <div id="status" class="status" style="display: none;"></div>
+
+    <!-- New Note Modal -->
+    <div id="newNoteModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.4); z-index:9999; align-items:center; justify-content:center;">
+      <div style="background:#fff; padding:20px; border-radius:8px; width:320px; box-shadow:0 10px 30px rgba(0,0,0,0.2); font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+        <h3 style="margin:0 0 10px 0; font-size:16px;">Create New Note</h3>
+        <div class="input-group">
+          <label for="newNoteTitle">Note title</label>
+          <input type="text" id="newNoteTitle" placeholder="e.g. Client XYZ main note" />
+        </div>
+        <div style="display:flex; gap:10px; justify-content:flex-end;">
+          <button id="cancelNewNote" class="button" style="background:#6c757d; width:auto; padding:8px 12px;">Cancel</button>
+          <button id="createNewNote" class="button" style="background:#17a2b8; width:auto; padding:8px 12px;">Create</button>
+        </div>
       </div>
     </div>
   </div>

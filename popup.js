@@ -6,6 +6,13 @@ document.addEventListener('DOMContentLoaded', function() {
   const loadDatabasesBtn = document.getElementById('loadDatabases');
   const saveConfigBtn = document.getElementById('saveConfig');
   const testConnectionBtn = document.getElementById('testConnection');
+  const saveDatabaseBtn = document.getElementById('saveDatabase');
+  const connectionStatus = document.getElementById('connectionStatus');
+  const databaseStatus = document.getElementById('databaseStatus');
+  const databasePanel = document.getElementById('databasePanel');
+  const mainView = document.getElementById('mainView');
+  const settingsView = document.getElementById('settingsView');
+  const backBtn = document.getElementById('backBtn');
   const startNoteTakingBtn = document.getElementById('startNoteTaking');
   const stopNoteTakingBtn = document.getElementById('stopNoteTaking');
   const meetingStatus = document.getElementById('meetingStatus');
@@ -31,9 +38,10 @@ document.addEventListener('DOMContentLoaded', function() {
   loadConfig();
 
   // Event listeners
-  loadDatabasesBtn.addEventListener('click', loadNotionDatabases);
-  saveConfigBtn.addEventListener('click', saveConfig);
   testConnectionBtn.addEventListener('click', testConnection);
+  saveConfigBtn.addEventListener('click', saveConfig);
+  loadDatabasesBtn.addEventListener('click', loadNotionDatabases);
+  saveDatabaseBtn.addEventListener('click', saveDatabase);
   startNoteTakingBtn.addEventListener('click', startNoteTaking);
   stopNoteTakingBtn.addEventListener('click', stopNoteTaking);
   loadNotionPagesBtn.addEventListener('click', loadNotionPages);
@@ -42,7 +50,8 @@ document.addEventListener('DOMContentLoaded', function() {
   debugToggle.addEventListener('change', saveDebugToggle);
   refreshLogsBtn.addEventListener('click', loadLogs);
   clearLogsBtn.addEventListener('click', clearLogs);
-  settingsBtn.addEventListener('click', toggleSettings);
+  settingsBtn.addEventListener('click', showSettings);
+  backBtn.addEventListener('click', showMain);
   addNewNoteBtn.addEventListener('click', openNewNoteModal);
   createNewNoteBtn.addEventListener('click', createNewNote);
   cancelNewNoteBtn.addEventListener('click', closeNewNoteModal);
@@ -55,9 +64,15 @@ document.addEventListener('DOMContentLoaded', function() {
       const config = await chrome.storage.sync.get(['geminiApiKey', 'notionToken', 'notionDatabaseId', 'notionDatabaseTitle', 'defaultNotionPageId', 'defaultNotionPageTitle', 'debugEnabled']);
       geminiApiKeyInput.value = config.geminiApiKey || '';
       notionTokenInput.value = config.notionToken || '';
-      if (config.notionDatabaseId && config.notionDatabaseTitle) {
-        notionDatabaseSelect.innerHTML = `<option value="${config.notionDatabaseId}">${config.notionDatabaseTitle}</option>`;
+      
+      // Show database panel if API keys are configured
+      if (config.geminiApiKey && config.notionToken) {
+        databasePanel.style.display = 'block';
+        if (config.notionDatabaseId && config.notionDatabaseTitle) {
+          notionDatabaseSelect.innerHTML = `<option value="${config.notionDatabaseId}">${config.notionDatabaseTitle}</option>`;
+        }
       }
+      
       if (config.defaultNotionPageId && config.defaultNotionPageTitle) {
         notionPageSelect.innerHTML = `<option value="${config.defaultNotionPageId}">${config.defaultNotionPageTitle}</option>`;
       }
@@ -74,27 +89,30 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   async function saveConfig() {
-    const databaseId = notionDatabaseSelect.value.trim();
-    const databaseTitle = notionDatabaseSelect.options[notionDatabaseSelect.selectedIndex]?.text || '';
-    
     const config = {
       geminiApiKey: geminiApiKeyInput.value.trim(),
-      notionToken: notionTokenInput.value.trim(),
-      notionDatabaseId: databaseId,
-      notionDatabaseTitle: databaseTitle
+      notionToken: notionTokenInput.value.trim()
     };
 
-    if (!config.geminiApiKey || !config.notionToken || !config.notionDatabaseId) {
-      showStatus('Please fill in all configuration fields and select a database', 'error');
+    if (!config.geminiApiKey || !config.notionToken) {
+      showInline(connectionStatus, 'Please fill in both API keys', 'error');
       return;
     }
 
     try {
       await chrome.storage.sync.set(config);
-      showStatus('Configuration saved successfully', 'success');
+      showInline(connectionStatus, 'API configuration saved successfully', 'success');
+      
+      // Disable save button after successful save
+      saveConfigBtn.disabled = true;
+      saveConfigBtn.textContent = 'Configuration Saved';
+      
+      // Show database panel in main view after successful save
+      databasePanel.style.display = 'block';
+      
       updateButtonStates();
     } catch (error) {
-      showStatus('Error saving configuration', 'error');
+      showInline(connectionStatus, 'Error saving configuration', 'error');
     }
   }
 
@@ -102,10 +120,12 @@ document.addEventListener('DOMContentLoaded', function() {
     try {
       const { notionToken } = await chrome.storage.sync.get(['notionToken']);
       if (!notionToken) {
-        showStatus('Configure Notion token first', 'error');
+        showInline(databaseStatus, 'Configure Notion token first', 'error');
         return;
       }
 
+      showInline(databaseStatus, 'Loading databases...', 'info');
+      
       const resp = await chrome.runtime.sendMessage({ action: 'getNotionDatabases' });
       if (!resp || !resp.success) throw new Error(resp?.error || 'Failed to fetch databases');
       
@@ -119,9 +139,36 @@ document.addEventListener('DOMContentLoaded', function() {
         notionDatabaseSelect.appendChild(option);
       });
       
-      showStatus('Databases loaded successfully', 'success');
+      showInline(databaseStatus, 'Databases loaded successfully', 'success');
     } catch (e) {
-      showStatus(`Error loading databases: ${e.message}`, 'error');
+      showInline(databaseStatus, `Error loading databases: ${e.message}`, 'error');
+    }
+  }
+
+  async function saveDatabase() {
+    const databaseId = notionDatabaseSelect.value.trim();
+    const databaseTitle = notionDatabaseSelect.options[notionDatabaseSelect.selectedIndex]?.text || '';
+    
+    if (!databaseId) {
+      showInline(databaseStatus, 'Please select a database first', 'error');
+      return;
+    }
+
+    try {
+      await chrome.storage.sync.set({ 
+        notionDatabaseId: databaseId, 
+        notionDatabaseTitle: databaseTitle 
+      });
+      
+      showInline(databaseStatus, `Database saved: ${databaseTitle}`, 'success');
+      
+      // Disable save button after successful save
+      saveDatabaseBtn.disabled = true;
+      saveDatabaseBtn.textContent = 'Database Saved';
+      
+      updateButtonStates();
+    } catch (error) {
+      showInline(databaseStatus, 'Error saving database', 'error');
     }
   }
 
@@ -142,11 +189,14 @@ document.addEventListener('DOMContentLoaded', function() {
     await loadLogs();
   }
 
-  function toggleSettings() {
-    const isVisible = settingsPanel.style.display !== 'none';
-    settingsPanel.style.display = isVisible ? 'none' : 'block';
-    settingsBtn.textContent = isVisible ? '⚙️' : '✕';
-    settingsBtn.title = isVisible ? 'Settings' : 'Close Settings';
+  function showSettings() {
+    mainView.style.display = 'none';
+    settingsView.style.display = 'block';
+  }
+
+  function showMain() {
+    settingsView.style.display = 'none';
+    mainView.style.display = 'block';
   }
 
   function openNewNoteModal() {
@@ -194,16 +244,19 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   async function testConnection() {
-    const config = await chrome.storage.sync.get(['geminiApiKey', 'notionToken', 'notionDatabaseId']);
+    const geminiApiKey = geminiApiKeyInput.value.trim();
+    const notionToken = notionTokenInput.value.trim();
     
-    if (!config.geminiApiKey || !config.notionToken || !config.notionDatabaseId) {
-      showStatus('Please configure API keys and select a database first', 'error');
+    if (!geminiApiKey || !notionToken) {
+      showInline(connectionStatus, 'Please enter both API keys first', 'error');
       return;
     }
 
     try {
+      showInline(connectionStatus, 'Testing connections...', 'info');
+      
       // Test Gemini API
-      const geminiResponse = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key=' + config.geminiApiKey, {
+      const geminiResponse = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key=' + geminiApiKey, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -221,10 +274,10 @@ document.addEventListener('DOMContentLoaded', function() {
         throw new Error('Gemini API test failed');
       }
 
-      // Test Notion API
-      const notionResponse = await fetch(`https://api.notion.com/v1/databases/${config.notionDatabaseId}`, {
+      // Test Notion API (just test authentication, not specific database)
+      const notionResponse = await fetch('https://api.notion.com/v1/users/me', {
         headers: {
-          'Authorization': `Bearer ${config.notionToken}`,
+          'Authorization': `Bearer ${notionToken}`,
           'Notion-Version': '2022-06-28',
           'Content-Type': 'application/json'
         }
@@ -234,9 +287,14 @@ document.addEventListener('DOMContentLoaded', function() {
         throw new Error('Notion API test failed');
       }
 
-      showStatus('Connection test successful!', 'success');
+      showInline(connectionStatus, 'Connection test successful! You can now save your configuration.', 'success');
+      
+      // Enable save button on successful test
+      saveConfigBtn.disabled = false;
+      
     } catch (error) {
-      showStatus(`Connection test failed: ${error.message}`, 'error');
+      showInline(connectionStatus, `Connection test failed: ${error.message}`, 'error');
+      saveConfigBtn.disabled = true;
     }
   }
 
@@ -356,12 +414,20 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   function updateButtonStates() {
-    const hasConfig = geminiApiKeyInput.value && notionTokenInput.value && notionDatabaseSelect.value;
+    const hasApiKeys = geminiApiKeyInput.value && notionTokenInput.value;
+    const hasDatabase = notionDatabaseSelect.value;
     const isInMeeting = meetingStatus.classList.contains('active');
     
-    testConnectionBtn.disabled = !hasConfig;
-    startNoteTakingBtn.disabled = !hasConfig || !isInMeeting;
-    stopNoteTakingBtn.disabled = !hasConfig || !isInMeeting;
+    // Test connection button - enabled when both API keys are entered
+    testConnectionBtn.disabled = !hasApiKeys;
+    
+    // Save database button - enabled when database is selected
+    saveDatabaseBtn.disabled = !hasDatabase;
+    
+    // Note taking buttons - enabled when both API keys and database are configured
+    const hasFullConfig = hasApiKeys && hasDatabase;
+    startNoteTakingBtn.disabled = !hasFullConfig || !isInMeeting;
+    stopNoteTakingBtn.disabled = !hasFullConfig || !isInMeeting;
   }
 
   function showStatus(message, type) {
@@ -381,8 +447,10 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   // Update button states when inputs change
-  [geminiApiKeyInput, notionTokenInput, notionDatabaseSelect].forEach(input => {
+  [geminiApiKeyInput, notionTokenInput].forEach(input => {
     input.addEventListener('input', updateButtonStates);
-    input.addEventListener('change', updateButtonStates);
   });
+  
+  // Database selection change handler
+  notionDatabaseSelect.addEventListener('change', updateButtonStates);
 });
