@@ -35,7 +35,8 @@
   ],
   "action": {
     "default_popup": "popup.html",
-    "default_title": "Athena"
+    "default_title": "Athena",
+    "default_icon": "icons/Athena Logo.png"
   },
   "web_accessible_resources": [
     {

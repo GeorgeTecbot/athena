@@ -167,26 +167,38 @@ class MeetingNotesProcessor {
         throw new Error('Notion configuration missing');
       }
 
-      const response = await fetch(`https://api.notion.com/v1/databases/${config.notionDatabaseId}/query`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${config.notionToken}`,
-          'Notion-Version': '2022-06-28',
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          page_size: 100
-        })
-      });
+      // Load pages with pagination
+      let allPages = [];
+      let hasMore = true;
+      let startCursor = undefined;
 
-      if (!response.ok) {
-        await this.addLog('error', 'Notion query failed', { status: response.status });
-        throw new Error(`Notion API error: ${response.status}`);
+      while (hasMore) {
+        const response = await fetch(`https://api.notion.com/v1/databases/${config.notionDatabaseId}/query`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${config.notionToken}`,
+            'Notion-Version': '2022-06-28',
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            page_size: 50,
+            start_cursor: startCursor
+          })
+        });
+
+        if (!response.ok) {
+          await this.addLog('error', 'Notion query failed', { status: response.status });
+          throw new Error(`Notion API error: ${response.status}`);
+        }
+
+        const data = await response.json();
+        allPages = allPages.concat(data.results);
+        hasMore = data.has_more;
+        startCursor = data.next_cursor;
       }
 
-      const data = await response.json();
-      await this.addLog('info', 'Fetched Notion pages', { count: data.results?.length || 0 });
-      return { success: true, pages: data.results };
+      await this.addLog('info', 'Fetched Notion pages', { count: allPages.length });
+      return { success: true, pages: allPages };
       
     } catch (error) {
       console.error('Error fetching Notion pages:', error);
@@ -204,31 +216,43 @@ class MeetingNotesProcessor {
         throw new Error('Notion token not configured');
       }
 
-      const response = await fetch('https://api.notion.com/v1/search', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${config.notionToken}`,
-          'Notion-Version': '2022-06-28',
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          filter: {
-            property: 'object',
-            value: 'database'
-          },
-          page_size: 100
-        })
-      });
+      // Load databases with pagination
+      let allDatabases = [];
+      let hasMore = true;
+      let startCursor = undefined;
 
-      if (!response.ok) {
-        await this.addLog('error', 'Notion search failed', { status: response.status });
-        throw new Error(`Notion API error: ${response.status}`);
+      while (hasMore) {
+        const response = await fetch('https://api.notion.com/v1/search', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${config.notionToken}`,
+            'Notion-Version': '2022-06-28',
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            filter: {
+              property: 'object',
+              value: 'database'
+            },
+            page_size: 50,
+            start_cursor: startCursor
+          })
+        });
+
+        if (!response.ok) {
+          await this.addLog('error', 'Notion search failed', { status: response.status });
+          throw new Error(`Notion API error: ${response.status}`);
+        }
+
+        const data = await response.json();
+        allDatabases = allDatabases.concat(data.results);
+        hasMore = data.has_more;
+        startCursor = data.next_cursor;
       }
 
-      const data = await response.json();
-      await this.addLog('info', 'Fetched Notion databases', { count: data.results?.length || 0 });
-      return { success: true, databases: data.results };
-      
+      await this.addLog('info', 'Fetched Notion databases', { count: allDatabases.length });
+      return { success: true, databases: allDatabases };
+
     } catch (error) {
       console.error('Error fetching Notion databases:', error);
       await this.addLog('error', 'Fetching Notion databases failed', { error: String(error) });
@@ -486,26 +510,38 @@ class MeetingNotesProcessor {
             </div>
             
             <div class="page-selection">
-              <select id="notion-page-select">
-                <option value="">Select a page...</option>
-                ${pages.map(page => {
-                  // Find the property whose type is 'title' regardless of its name
-                  let title = 'Untitled';
-                  try {
-                    const properties = page.properties || {};
-                    const titleProp = Object.values(properties).find(p => p && p.type === 'title');
-                    if (titleProp && Array.isArray(titleProp.title) && titleProp.title.length > 0) {
-                      title = titleProp.title[0]?.text?.content || titleProp.title[0]?.plain_text || 'Untitled';
-                    }
-                  } catch {}
-                  return `<option value="${page.id}">${title}</option>`;
-                }).join('')}
-              </select>
+              <div class="custom-dropdown">
+                <div id="page-dropdown-toggle" class="dropdown-toggle">
+                  <span id="page-dropdown-text">Select a page...</span>
+                  <span class=\"material-icons\">expand_more</span>
+                </div>
+                <div id="page-dropdown-menu" class="dropdown-menu">
+                  <div class="dropdown-search">
+                    <input type="text" id="page-search-input" placeholder="Search pages..." />
+                  </div>
+                  <div id="page-dropdown-options" class="dropdown-options">
+                    ${pages.map(page => {
+                      // Find the property whose type is 'title' regardless of its name
+                      let title = 'Untitled';
+                      try {
+                        const properties = page.properties || {};
+                        const titleProp = Object.values(properties).find(p => p && p.type === 'title');
+                        if (titleProp && Array.isArray(titleProp.title) && titleProp.title.length > 0) {
+                          title = titleProp.title[0]?.text?.content || titleProp.title[0]?.plain_text || 'Untitled';
+                        }
+                      } catch {}
+                      return `<div class="dropdown-option" data-page-id="${page.id}">${title}</div>`;
+                    }).join('')}
+                  </div>
+                  <div class="dropdown-footer">
+                    <button id="create-new-note-modal" class="btn btn-secondary" style="width: 100%; margin: 0; background: #17a2b8; color: white; border: none;"><span class=\"material-icons\" style=\"vertical-align:middle;margin-right:6px;\">note_add</span>Create New Note</button>
+                  </div>
+                </div>
+              </div>
             </div>
             
             <div class="modal-buttons">
               <button id="append-notes" class="btn btn-primary" disabled>Append Notes</button>
-              <button id="create-new-page" class="btn btn-secondary">Create New Page</button>
               <button id="cancel-notes" class="btn btn-outline">Cancel</button>
             </div>
           </div>
@@ -569,12 +605,74 @@ class MeetingNotesProcessor {
         .page-selection {
           margin-bottom: 20px;
         }
-        .page-selection select {
+        .custom-dropdown {
+          position: relative;
+          width: 100%;
+        }
+        .dropdown-toggle {
           width: 100%;
           padding: 10px;
           border: 1px solid #ddd;
           border-radius: 4px;
           font-size: 14px;
+          background: white;
+          cursor: pointer;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+        }
+        .dropdown-toggle:hover {
+          border-color: #007bff;
+        }
+        .dropdown-menu {
+          display: none;
+          position: absolute;
+          top: 100%;
+          left: 0;
+          right: 0;
+          background: white;
+          border: 1px solid #ddd;
+          border-radius: 4px;
+          box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+          z-index: 1000;
+          max-height: 400px;
+          flex-direction: column;
+        }
+        .dropdown-search {
+          padding: 8px;
+          border-bottom: 1px solid #eee;
+          flex-shrink: 0;
+        }
+        .dropdown-search input {
+          width: 100%;
+          padding: 4px;
+          border: 1px solid #ddd;
+          border-radius: 2px;
+          font-size: 12px;
+        }
+        .dropdown-options {
+          flex: 1;
+          overflow-y: auto;
+          max-height: 350px;
+        }
+        .dropdown-option {
+          padding: 8px 12px;
+          cursor: pointer;
+          font-size: 13px;
+          border-bottom: 1px solid #f0f0f0;
+        }
+        .dropdown-option:hover {
+          background: #f8f9fa;
+        }
+        .dropdown-option.selected {
+          background: #007bff;
+          color: white;
+        }
+        .dropdown-footer {
+          border-top: 1px solid #eee;
+          padding: 8px;
+          flex-shrink: 0;
+          background: white;
         }
         .modal-buttons {
           display: flex;
@@ -622,12 +720,14 @@ class MeetingNotesProcessor {
   }
 
   injectModal(modalData, notes) {
+    console.log('Injecting modal with data:', { modalData, notes });
     // Inject into the active tab
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
       if (tabs[0]) {
         chrome.scripting.executeScript({
           target: { tabId: tabs[0].id },
           func: (modalHTML, styleHTML, notesData) => {
+            console.log('Executing script in tab, modalHTML length:', modalHTML.length);
             // Remove existing modal and styles if present
             const existingModal = document.getElementById('notion-page-selection-modal');
             const existingStyles = document.getElementById('notion-selection-styles');
@@ -641,25 +741,141 @@ class MeetingNotesProcessor {
             document.head.insertAdjacentHTML('beforeend', styleHTML);
             
             // Add modal
+            console.log('About to insert modal HTML:', modalHTML.substring(0, 1000));
             document.body.insertAdjacentHTML('beforeend', modalHTML);
+            console.log('Modal inserted, checking for elements...');
             
             // Add event listeners
-            const pageSelect = document.getElementById('notion-page-select');
+            const pageDropdownToggle = document.getElementById('page-dropdown-toggle');
+            const pageDropdownMenu = document.getElementById('page-dropdown-menu');
+            const pageDropdownText = document.getElementById('page-dropdown-text');
+            const pageDropdownOptions = document.getElementById('page-dropdown-options');
+            const pageSearchInput = document.getElementById('page-search-input');
+            const createNewNoteModal = document.getElementById('create-new-note-modal');
             const appendBtn = document.getElementById('append-notes');
-            const createBtn = document.getElementById('create-new-page');
             const cancelBtn = document.getElementById('cancel-notes');
             
-            pageSelect.addEventListener('change', () => {
-              appendBtn.disabled = !pageSelect.value;
+            // Debug: Check if elements exist
+            console.log('Modal elements found:', {
+              pageDropdownToggle: !!pageDropdownToggle,
+              pageDropdownMenu: !!pageDropdownMenu,
+              pageDropdownText: !!pageDropdownText,
+              pageDropdownOptions: !!pageDropdownOptions,
+              pageSearchInput: !!pageSearchInput,
+              createNewNoteModal: !!createNewNoteModal,
+              appendBtn: !!appendBtn,
+              cancelBtn: !!cancelBtn
             });
             
+            // Check if old select element exists (fallback)
+            const oldSelect = document.getElementById('notion-page-select');
+            if (oldSelect) {
+              console.log('Old select element found, removing it');
+              oldSelect.remove();
+            }
+            
+            let selectedPageId = null;
+            let allPages = window.meetingNotes.pages || [];
+            
+            // Toggle dropdown
+            pageDropdownToggle.addEventListener('click', () => {
+              const isOpen = pageDropdownMenu.style.display !== 'none';
+              pageDropdownMenu.style.display = isOpen ? 'none' : 'flex';
+              if (!isOpen) {
+                pageSearchInput.focus();
+              }
+            });
+            
+            // Search functionality
+            pageSearchInput.addEventListener('input', () => {
+              const searchTerm = pageSearchInput.value.toLowerCase();
+              const filteredPages = allPages.filter(page => {
+                let title = 'Untitled';
+                try {
+                  const properties = page.properties || {};
+                  const titleProp = Object.values(properties).find(p => p && p.type === 'title');
+                  if (titleProp && Array.isArray(titleProp.title) && titleProp.title.length > 0) {
+                    title = titleProp.title[0]?.text?.content || titleProp.title[0]?.plain_text || 'Untitled';
+                  }
+                } catch {}
+                return title.toLowerCase().includes(searchTerm);
+              });
+              renderPageOptions(filteredPages);
+            });
+            
+            // Close dropdown when clicking outside
+            document.addEventListener('click', (e) => {
+              if (!e.target.closest('.custom-dropdown')) {
+                pageDropdownMenu.style.display = 'none';
+              }
+            });
+            
+            // Render page options
+            function renderPageOptions(pages) {
+              pageDropdownOptions.innerHTML = '';
+              
+              if (pages.length === 0) {
+                const noResults = document.createElement('div');
+                noResults.className = 'dropdown-option';
+                noResults.textContent = 'No pages found';
+                noResults.style.color = '#999';
+                noResults.style.fontStyle = 'italic';
+                pageDropdownOptions.appendChild(noResults);
+                return;
+              }
+              
+              pages.forEach(page => {
+                let title = 'Untitled';
+                try {
+                  const properties = page.properties || {};
+                  const titleProp = Object.values(properties).find(p => p && p.type === 'title');
+                  if (titleProp && Array.isArray(titleProp.title) && titleProp.title.length > 0) {
+                    title = titleProp.title[0]?.text?.content || titleProp.title[0]?.plain_text || 'Untitled';
+                  }
+                } catch {}
+                
+                const option = document.createElement('div');
+                option.className = 'dropdown-option';
+                option.dataset.pageId = page.id;
+                option.textContent = title;
+                
+                if (page.id === selectedPageId) {
+                  option.classList.add('selected');
+                }
+                
+                option.addEventListener('click', () => selectPage(page.id, title));
+                pageDropdownOptions.appendChild(option);
+              });
+            }
+            
+            // Select page
+            function selectPage(pageId, pageTitle) {
+              selectedPageId = pageId;
+              pageDropdownText.textContent = pageTitle;
+              pageDropdownMenu.style.display = 'none';
+              pageSearchInput.value = '';
+              appendBtn.disabled = false;
+            }
+            
+            // Create new note from dropdown
+            createNewNoteModal.addEventListener('click', () => {
+              pageDropdownMenu.style.display = 'none';
+              // For now, just show a message about creating new pages
+              alert('Creating new pages is not yet implemented. Please select an existing page.');
+            });
+            
+            // Initialize with all pages
+            renderPageOptions(allPages);
+            
+            // Debug: Log the modal HTML to verify it's correct
+            console.log('Modal HTML generated:', modalHTML.substring(0, 500) + '...');
+            
             appendBtn.addEventListener('click', () => {
-              const pageId = pageSelect.value;
-              if (pageId) {
+              if (selectedPageId) {
                 // Send message to background script to append notes
                 chrome.runtime.sendMessage({
                   action: 'appendToNotionPage',
-                  pageId: pageId,
+                  pageId: selectedPageId,
                   notes: window.meetingNotes
                 }, (response) => {
                   if (response.success) {
@@ -673,10 +889,6 @@ class MeetingNotesProcessor {
               }
             });
             
-            createBtn.addEventListener('click', () => {
-              // For now, just show a message about creating new pages
-              alert('Creating new pages is not yet implemented. Please select an existing page.');
-            });
             
             cancelBtn.addEventListener('click', () => {
               const modal = document.getElementById('notion-page-selection-modal');

@@ -2,17 +2,26 @@
 <html>
 <head>
   <meta charset="utf-8">
+  <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
   <style>
     body {
       width: 350px;
       padding: 20px;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #007bff; /* Banner blue */
+      color: #fff;
     }
     .header {
       display: flex;
       justify-content: space-between;
       align-items: center;
       margin-bottom: 20px;
+    }
+    .header h2 {
+      margin: 0;
+      color: #fff;
+      font-weight: 600;
+      letter-spacing: 0.2px;
     }
     .settings-btn {
       background: none;
@@ -21,25 +30,39 @@
       cursor: pointer;
       padding: 5px;
       border-radius: 4px;
-      transition: background-color 0.2s;
+      transition: background-color 0.2s, color 0.2s;
+      color: #fff;
     }
     .settings-btn:hover {
-      background-color: #f0f0f0;
+      background-color: rgba(255,255,255,0.15);
     }
     .settings-panel {
-      background: #f8f9fa;
-      padding: 15px;
-      border-radius: 4px;
+      background: #ffffff;
+      padding: 16px;
+      border-radius: 8px;
       margin-bottom: 20px;
-      border: 1px solid #e9ecef;
+      border: 1px solid rgba(0,0,0,0.08);
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
     }
     .config-section {
       margin-bottom: 20px;
+      background: #ffffff;
+      padding: 16px;
+      border-radius: 8px;
+      border: 1px solid rgba(0,0,0,0.08);
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
     }
     .config-section h3 {
       margin: 0 0 10px 0;
-      font-size: 14px;
-      color: #333;
+      font-size: 16px;
+      font-weight: 700;
+      color: #333333;
+    }
+    .settings-panel h3 {
+      margin: 0 0 10px 0;
+      font-size: 16px;
+      font-weight: 700;
+      color: #333333;
     }
     .input-group {
       margin-bottom: 15px;
@@ -48,14 +71,29 @@
       display: block;
       margin-bottom: 5px;
       font-size: 12px;
-      color: #666;
+      color: #555;
     }
     .input-group input {
       width: 100%;
-      padding: 8px;
-      border: 1px solid #ddd;
-      border-radius: 4px;
+      padding: 10px 12px;
+      border: 1px solid rgba(0,0,0,0.12);
+      border-radius: 6px;
       font-size: 12px;
+      background: #fff;
+      color: #333;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    .input-group input[type="checkbox"] {
+      width: auto;
+      padding: 0;
+      border: none;
+      border-radius: 0;
+      background: transparent;
+    }
+    .input-group input:focus {
+      outline: none;
+      border-color: #1976d2;
+      box-shadow: 0 0 0 3px rgba(25,118,210,0.15);
     }
     .button {
       width: 100%;
@@ -63,12 +101,15 @@
       background: #007bff;
       color: white;
       border: none;
-      border-radius: 4px;
+      border-radius: 6px;
       cursor: pointer;
       font-size: 14px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.15);
+      transition: transform 0.06s ease, box-shadow 0.2s ease, background 0.2s ease;
     }
     .button:hover {
       background: #0056b3;
+      box-shadow: 0 3px 8px rgba(0,0,0,0.2);
     }
     .button:disabled {
       background: #ccc;
@@ -93,33 +134,77 @@
       padding: 10px;
       border-radius: 4px;
       font-size: 12px;
+      background: #ffffff;
+      color: #333;
+      border: 1px solid rgba(0,0,0,0.08);
+      box-shadow: 0 1px 4px rgba(0,0,0,0.1);
     }
     .status.success {
-      background: #d4edda;
-      color: #155724;
-      border: 1px solid #c3e6cb;
+      background: #e6f4ea;
+      color: #1e7e34;
+      border: 1px solid #c9e7d1;
     }
     .status.error {
-      background: #f8d7da;
-      color: #721c24;
-      border: 1px solid #f5c6cb;
+      background: #fdecea;
+      color: #a12622;
+      border: 1px solid #f7d0cc;
     }
     .status.info {
-      background: #d1ecf1;
-      color: #0c5460;
-      border: 1px solid #bee5eb;
+      background: #e7f3fe;
+      color: #0b5cad;
+      border: 1px solid #cfe2ff;
+    }
+    .dropdown-option {
+      padding: 8px 12px;
+      cursor: pointer;
+      border-bottom: 1px solid #f0f0f0;
+      font-size: 14px;
+      color: #333333;
+    }
+    .dropdown-option:hover {
+      background: #f8f9fa;
+    }
+    .dropdown-option:last-child {
+      border-bottom: none;
+    }
+    .dropdown-option.selected {
+      background: #e3f2fd;
+      color: #1976d2;
+    }
+    .dropdown-toggle:disabled {
+      background: #f5f5f5;
+      color: #999;
+      cursor: not-allowed;
+    }
+    .dropdown-menu {
+      display: flex;
+      flex-direction: column;
+    }
+    .dropdown-options {
+      flex: 1;
+      overflow-y: auto;
+    }
+    .dropdown-footer {
+      flex-shrink: 0;
+      background: white;
+      position: sticky;
+      bottom: 0;
     }
     .meeting-status {
       text-align: center;
       padding: 15px;
-      background: #f8f9fa;
-      border-radius: 4px;
+      background: #f1f3f5; /* grey when no meeting */
+      border-radius: 8px;
       margin-bottom: 15px;
+      color: #333;
+      border: 1px solid rgba(0,0,0,0.06);
     }
     .meeting-status.active {
-      background: #d1ecf1;
-      color: #0c5460;
+      background: #e6f4ea; /* same green as success */
+      color: #1e7e34;
+      border: 1px solid #c9e7d1;
     }
+    .material-icons { vertical-align: middle; }
   </style>
 </head>
 <body>
@@ -128,7 +213,7 @@
   <div id="settingsView" style="display: none;">
     <div class="header">
       <h2>Settings</h2>
-      <button id="backBtn" class="settings-btn" title="Back to Main">←</button>
+      <button id="backBtn" class="settings-btn" title="Back to Main"><span class="material-icons">arrow_back</span></button>
     </div>
 
     <div class="settings-panel">
@@ -157,69 +242,75 @@
   <div id="mainView">
     <div class="header">
       <h2>Athena</h2>
-      <button id="settingsBtn" class="settings-btn" title="Settings">⚙️</button>
+      <button id="settingsBtn" class="settings-btn" title="Settings"><span class="material-icons">settings</span></button>
     </div>
 
     <div class="meeting-status" id="meetingStatus">
       <div>No active meeting detected</div>
     </div>
 
-    <!-- Database Selection Panel (hidden by default) -->
+    <!-- Database and Notes Selection (hidden by default) -->
     <div id="databasePanel" class="settings-panel" style="display: none;">
-      <h3>Database Selection</h3>
+      <h3>Database & Notes Selection</h3>
       
       <div class="input-group">
         <label for="notionDatabaseSelect">Select Notion Database</label>
-        <select id="notionDatabaseSelect" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px;">
-          <option value="">— Load databases to choose —</option>
-        </select>
+        <div style="display: flex; gap: 8px; align-items: center;">
+          <select id="notionDatabaseSelect" style="flex: 1; padding: 10px 12px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px; color:#333333; height: 40px; box-sizing: border-box;">
+            <option value="">— Load databases to choose —</option>
+          </select>
+          <button id="refreshDatabases" class="button" style="padding: 8px; width: auto; min-width: 40px;" title="Refresh Databases"><span class="material-icons">refresh</span></button>
+        </div>
       </div>
 
-      <div style="display:flex; gap:10px;">
-        <button id="loadDatabases" class="button" style="flex:1;">Load Databases</button>
-        <button id="saveDatabase" class="button" style="flex:1;" disabled>Save Database</button>
+      <div class="input-group">
+        <label for="notionPageSelect">Select Note/Page</label>
+        <div style="display: flex; gap: 8px; align-items: center;">
+          <div class="custom-dropdown" style="flex: 1; position: relative; height: 40px;">
+            <div id="pageDropdownToggle" class="dropdown-toggle" style="height: 40px; padding: 10px 12px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px; color:#333333; background: white; cursor: pointer; display: flex; justify-content: space-between; align-items: center; box-sizing: border-box;" disabled>
+              <span id="pageDropdownText" style="color:#333333;">— Select a database first —</span>
+              <span class="material-icons">expand_more</span>
+            </div>
+            <div id="pageDropdownMenu" class="dropdown-menu" style="display: none; position: absolute; top: 100%; left: 0; right: 0; background: white; border: 1px solid #ddd; border-radius: 4px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); z-index: 1000; max-height: 400px; flex-direction: column;">
+              <div class="dropdown-search" style="padding: 10px; border-bottom: 1px solid #eee; flex-shrink: 0;">
+                <input type="text" id="pageSearchInput" placeholder="Search notes..." style="width: 100%; padding: 6px 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 13px;">
+              </div>
+              <div id="pageDropdownOptions" class="dropdown-options" style="flex: 1; overflow-y: auto; max-height: 350px;">
+                <!-- Options will be populated here -->
+              </div>
+              <div class="dropdown-footer" style="border-top: 1px solid #eee; padding: 8px; flex-shrink: 0; background: white;">
+                <button id="createNewNoteInDropdown" class="button" style="width: 100%; padding: 8px; font-size: 14px; font-weight:700; background: #17a2b8;"><span class="material-icons" style="vertical-align:middle;margin-right:6px;">note_add</span>Create New Note</button>
+              </div>
+            </div>
+          </div>
+          <button id="refreshPages" class="button" style="padding: 8px; width: auto; min-width: 40px;" title="Refresh Pages" disabled><span class="material-icons">refresh</span></button>
+        </div>
       </div>
       
       <div id="databaseStatus" class="status" style="display:none; margin-top:10px;"></div>
     </div>
 
-    <div class="config-section">
-      <h3>Default Notion Page</h3>
-
-      <div class="input-group">
-        <label for="notionPageSelect">Choose a page to auto-append notes</label>
-        <select id="notionPageSelect" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 12px;">
-          <option value="">— Load pages to choose —</option>
-        </select>
-      </div>
-
-      <div style="display:flex; gap:10px;">
-        <button id="loadNotionPages" class="button" style="flex:1;">Load Pages</button>
-        <button id="saveDefaultPage" class="button" style="flex:1;">Save Default</button>
-        <button id="clearDefaultPage" class="button" style="flex:1; background:#6c757d;">Clear</button>
-        <button id="addNewNote" class="button" style="flex:1; background:#17a2b8;">Add New Note</button>
-      </div>
-
-      <div id="defaultPageStatus" class="status" style="display:none; margin-top:10px;"></div>
-    </div>
 
     <div class="config-section">
       <h3>Actions</h3>
       <div style="display: flex; gap: 10px;">
-        <button id="startNoteTaking" class="button button-start" disabled>▶️ Start Note Taking</button>
-        <button id="stopNoteTaking" class="button button-stop" disabled>⏹️ Stop Note Taking</button>
+        <button id="startStopRecording" class="button button-start" disabled style="background:#28a745; border:none;"><span class="material-icons" style="margin-right:6px;color:#dc3545;">fiber_manual_record</span>Start Recording</button>
       </div>
     </div>
 
     <div class="config-section">
       <h3>Debug</h3>
-      <div class="input-group" style="display:flex;align-items:center;gap:10px;">
-        <label for="debugToggle" style="margin:0;">Enable debug logging</label>
-        <input type="checkbox" id="debugToggle" />
-        <button id="refreshLogs" class="button" style="margin-left:auto;flex:0 0 auto;width:auto;padding:8px 12px;">Refresh</button>
-        <button id="clearLogs" class="button" style="flex:0 0 auto;width:auto;padding:8px 12px;background:#6c757d;">Clear</button>
+      <div class="input-group" style="display:flex;align-items:center;gap:10px;white-space:nowrap;">
+        <label for="debugToggle" style="margin:0;flex:1;">Enable debug logging</label>
+        <input type="checkbox" id="debugToggle" style="margin-left:auto;" />
       </div>
-      <div id="logs" style="height:180px;overflow:auto;border:1px solid #ddd;border-radius:4px;padding:8px;font-family:Menlo,Consolas,monospace;font-size:11px;background:#fafafa;"></div>
+      <div id="debugControls" style="display:none;">
+        <div style="display:flex;align-items:center;gap:10px; margin-bottom:10px;">
+          <button id="refreshLogs" class="button" style="flex:0 0 auto;width:auto;padding:8px 12px;"><span class="material-icons" style="vertical-align:middle;">refresh</span></button>
+          <button id="clearLogs" class="button" style="flex:0 0 auto;width:auto;padding:8px 12px;background:#6c757d;"><span class="material-icons" style="vertical-align:middle;">clear_all</span></button>
+        </div>
+        <div id="logs" style="height:180px;overflow:auto;border:1px solid #ddd;border-radius:4px;padding:8px;font-family:Menlo,Consolas,monospace;font-size:11px;background:#fafafa;"></div>
+      </div>
     </div>
 
     <div id="status" class="status" style="display: none;"></div>
@@ -233,8 +324,8 @@
           <input type="text" id="newNoteTitle" placeholder="e.g. Client XYZ main note" />
         </div>
         <div style="display:flex; gap:10px; justify-content:flex-end;">
-          <button id="cancelNewNote" class="button" style="background:#6c757d; width:auto; padding:8px 12px;">Cancel</button>
-          <button id="createNewNote" class="button" style="background:#17a2b8; width:auto; padding:8px 12px;">Create</button>
+          <button id="cancelNewNote" class="button" style="background:#6c757d; width:auto; padding:8px 12px;"><span class="material-icons" style="vertical-align:middle;">close</span></button>
+          <button id="createNewNote" class="button" style="background:#17a2b8; width:auto; padding:8px 12px;"><span class="material-icons" style="vertical-align:middle;">check</span></button>
         </div>
       </div>
     </div>

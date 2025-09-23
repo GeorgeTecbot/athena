@@ -124,6 +124,16 @@ class MeetingDetector {
   }
 
   showNoteTakingPrompt() {
+    // Ensure Material Icons font is available on the page
+    try {
+      const existingIcons = document.querySelector('link[href*="fonts.googleapis.com/icon?family=Material+Icons"]');
+      if (!existingIcons) {
+        const link = document.createElement('link');
+        link.rel = 'stylesheet';
+        link.href = 'https://fonts.googleapis.com/icon?family=Material+Icons';
+        document.head.appendChild(link);
+      }
+    } catch {}
     // Create banner for note-taking prompt
     const banner = document.createElement('div');
     banner.id = 'meeting-notes-banner';
@@ -137,7 +147,7 @@ class MeetingDetector {
             <button id="start-notes" class="btn btn-primary">Yes, Start Taking Notes</button>
             <button id="dismiss-notes" class="btn btn-secondary">No, Thanks</button>
           </div>
-          <button id="close-banner" class="close-btn" title="Close">×</button>
+            <button id="close-banner" class="close-btn" title="Close"><span class=\"material-icons\">close</span></button>
         </div>
       </div>
     `;
@@ -214,13 +224,36 @@ class MeetingDetector {
       .btn-secondary:hover {
         background: rgba(255, 255, 255, 0.1);
       }
+      @keyframes spin {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
+      }
+      .spinner {
+        display: inline-flex;
+        animation: spin 1s linear infinite;
+      }
     `;
     
     document.head.appendChild(style);
     document.body.appendChild(banner);
     
     // Add event listeners
-    document.getElementById('start-notes').addEventListener('click', () => {
+    document.getElementById('start-notes').addEventListener('click', (e) => {
+      const btn = e.currentTarget;
+      const sibling = document.getElementById('dismiss-notes');
+      btn.disabled = true;
+      btn.style.opacity = '0.9';
+      btn.innerHTML = '<span class="material-icons spinner" style="vertical-align:middle;margin-right:8px;font-size:18px;">autorenew</span>Loading…';
+      // Match height with the "No, Thanks" button
+      try {
+        const h = sibling ? sibling.offsetHeight : null;
+        if (h) {
+          btn.style.height = h + 'px';
+          btn.style.display = 'inline-flex';
+          btn.style.alignItems = 'center';
+          btn.style.boxSizing = 'border-box';
+        }
+      } catch {}
       this.showPageSelection();
     });
     
@@ -242,6 +275,16 @@ class MeetingDetector {
 
   async showPageSelection() {
     try {
+      // Ensure Material Icons font is available on the page (in case prompt was bypassed)
+      try {
+        const existingIcons = document.querySelector('link[href*="fonts.googleapis.com/icon?family=Material+Icons"]');
+        if (!existingIcons) {
+          const link = document.createElement('link');
+          link.rel = 'stylesheet';
+          link.href = 'https://fonts.googleapis.com/icon?family=Material+Icons';
+          document.head.appendChild(link);
+        }
+      } catch {}
       // Get Notion pages from background script
       const response = await chrome.runtime.sendMessage({ action: 'getNotionPages' });
       
@@ -259,25 +302,36 @@ class MeetingDetector {
                 <strong>Select Notion Page:</strong> Choose which page to append the meeting notes to
               </div>
               <div class="banner-actions">
-                <select id="notion-page-select" style="padding: 6px 10px; border: 1px solid rgba(255,255,255,0.3); border-radius: 4px; background: rgba(255,255,255,0.1); color: white; font-size: 13px; min-width: 200px;">
-                  <option value="">Select a page...</option>
-                  ${response.pages.map(page => {
-                    // Find the property whose type is 'title' regardless of its name
-                    let title = 'Untitled';
-                    try {
-                      const properties = page.properties || {};
-                      const titleProp = Object.values(properties).find(p => p && p.type === 'title');
-                      if (titleProp && Array.isArray(titleProp.title) && titleProp.title.length > 0) {
-                        title = titleProp.title[0]?.text?.content || titleProp.title[0]?.plain_text || 'Untitled';
-                      }
-                    } catch {}
-                    return `<option value="${page.id}">${title}</option>`;
-                  }).join('')}
-                </select>
-                <button id="add-new-note-banner" class="btn btn-secondary" title="Create new note">+ New</button>
-                <button id="confirm-notes" class="btn btn-primary" disabled>Start Recording</button>
-                <button id="back-to-prompt" class="btn btn-secondary">Back</button>
-                <button id="cancel-notes" class="btn btn-secondary">Cancel</button>
+                <div class="custom-dropdown" style="position: relative; min-width: 200px; height: 40px;">
+                  <div id="banner-page-dropdown-toggle" class="dropdown-toggle" style="height: 40px; padding: 8px 12px; border: 1px solid rgba(255,255,255,0.3); border-radius: 4px; background: rgba(255,255,255,0.1); color: white; font-size: 13px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; box-sizing: border-box;">
+                    <span id="banner-page-dropdown-text">Select a page...</span>
+                    <span class="material-icons" style="font-size:18px;">expand_more</span>
+                  </div>
+                  <div id="banner-page-dropdown-menu" class="dropdown-menu" style="display: none; position: absolute; top: 100%; left: 0; right: 0; background: white; border: 1px solid #ddd; border-radius: 4px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); z-index: 1000; max-height: 400px; flex-direction: column;">
+                    <div class="dropdown-search" style="padding: 8px; border-bottom: 1px solid #eee; flex-shrink: 0;">
+                      <input type="text" id="banner-page-search-input" placeholder="Search pages..." style="width: 100%; padding: 4px; border: 1px solid #ddd; border-radius: 2px; font-size: 12px;">
+                    </div>
+                    <div id="banner-page-dropdown-options" class="dropdown-options" style="flex: 1; overflow-y: auto; max-height: 350px;">
+                      ${response.pages.map(page => {
+                        // Find the property whose type is 'title' regardless of its name
+                        let title = 'Untitled';
+                        try {
+                          const properties = page.properties || {};
+                          const titleProp = Object.values(properties).find(p => p && p.type === 'title');
+                          if (titleProp && Array.isArray(titleProp.title) && titleProp.title.length > 0) {
+                            title = titleProp.title[0]?.text?.content || titleProp.title[0]?.plain_text || 'Untitled';
+                          }
+                        } catch {}
+                        return `<div class="dropdown-option" data-page-id="${page.id}" style="padding: 8px 12px; cursor: pointer; font-size: 13px; border-bottom: 1px solid #f0f0f0; color: #333;">${title}</div>`;
+                      }).join('')}
+                    </div>
+                    <div class="dropdown-footer" style="border-top: 1px solid #eee; padding: 8px; flex-shrink: 0; background: white;">
+                      <button id="add-new-note-banner" class="btn btn-secondary" style="width: 100%; margin: 0; padding: 8px; font-size: 13px; background: #007bff; color: white; border: none;"><span class="material-icons" style="vertical-align:middle;margin-right:6px;">note_add</span>Create Note</button>
+                    </div>
+                  </div>
+                </div>
+                <button id="confirm-notes" class="btn btn-primary" disabled style="background: #28a745; color: white; border: none; height:40px; display:flex; align-items:center; padding: 0 12px;"><span class="material-icons" style="vertical-align:middle;margin-right:6px;color:#dc3545;">fiber_manual_record</span>Start Recording</button>
+                <button id="cancel-notes" class="btn btn-secondary" style="height:40px; display:flex; align-items:center; padding: 0 12px;">Cancel</button>
               </div>
               <button id="close-banner" class="close-btn" title="Close">×</button>
             </div>
@@ -285,28 +339,114 @@ class MeetingDetector {
         `;
 
         // Add event listeners for the new buttons
-        const pageSelect = document.getElementById('notion-page-select');
+        const pageDropdownToggle = document.getElementById('banner-page-dropdown-toggle');
+        const pageDropdownMenu = document.getElementById('banner-page-dropdown-menu');
+        const pageDropdownText = document.getElementById('banner-page-dropdown-text');
+        const pageDropdownOptions = document.getElementById('banner-page-dropdown-options');
+        const pageSearchInput = document.getElementById('banner-page-search-input');
         const confirmBtn = document.getElementById('confirm-notes');
-        const backBtn = document.getElementById('back-to-prompt');
         const cancelBtn = document.getElementById('cancel-notes');
         const addNewBtn = document.getElementById('add-new-note-banner');
 
-        pageSelect.addEventListener('change', () => {
-          confirmBtn.disabled = !pageSelect.value;
+        let selectedPageId = null;
+        let allPages = response.pages || [];
+
+        // Toggle dropdown
+        pageDropdownToggle.addEventListener('click', () => {
+          const isOpen = pageDropdownMenu.style.display !== 'none';
+          pageDropdownMenu.style.display = isOpen ? 'none' : 'flex';
+          if (!isOpen) {
+            pageSearchInput.focus();
+          }
         });
 
+        // Search functionality
+        pageSearchInput.addEventListener('input', () => {
+          const searchTerm = pageSearchInput.value.toLowerCase();
+          const filteredPages = allPages.filter(page => {
+            let title = 'Untitled';
+            try {
+              const properties = page.properties || {};
+              const titleProp = Object.values(properties).find(p => p && p.type === 'title');
+              if (titleProp && Array.isArray(titleProp.title) && titleProp.title.length > 0) {
+                title = titleProp.title[0]?.text?.content || titleProp.title[0]?.plain_text || 'Untitled';
+              }
+            } catch {}
+            return title.toLowerCase().includes(searchTerm);
+          });
+          renderPageOptions(filteredPages);
+        });
+
+        // Close dropdown when clicking outside
+        document.addEventListener('click', (e) => {
+          if (!e.target.closest('.custom-dropdown')) {
+            pageDropdownMenu.style.display = 'none';
+          }
+        });
+
+        // Render page options
+        function renderPageOptions(pages) {
+          pageDropdownOptions.innerHTML = '';
+          
+          if (pages.length === 0) {
+            const noResults = document.createElement('div');
+            noResults.className = 'dropdown-option';
+            noResults.textContent = 'No pages found';
+            noResults.style.color = '#999';
+            noResults.style.fontStyle = 'italic';
+            pageDropdownOptions.appendChild(noResults);
+            return;
+          }
+          
+          pages.forEach(page => {
+            let title = 'Untitled';
+            try {
+              const properties = page.properties || {};
+              const titleProp = Object.values(properties).find(p => p && p.type === 'title');
+              if (titleProp && Array.isArray(titleProp.title) && titleProp.title.length > 0) {
+                title = titleProp.title[0]?.text?.content || titleProp.title[0]?.plain_text || 'Untitled';
+              }
+            } catch {}
+            
+            const option = document.createElement('div');
+            option.className = 'dropdown-option';
+            option.dataset.pageId = page.id;
+            option.textContent = title;
+            option.style.padding = '8px 12px';
+            option.style.cursor = 'pointer';
+            option.style.fontSize = '13px';
+            option.style.borderBottom = '1px solid #f0f0f0';
+            option.style.color = '#333';
+            
+            if (page.id === selectedPageId) {
+              option.style.background = '#007bff';
+              option.style.color = 'white';
+            }
+            
+            option.addEventListener('click', () => selectPage(page.id, title));
+            pageDropdownOptions.appendChild(option);
+          });
+        }
+
+        // Select page
+        function selectPage(pageId, pageTitle) {
+          selectedPageId = pageId;
+          pageDropdownText.textContent = pageTitle;
+          pageDropdownMenu.style.display = 'none';
+          pageSearchInput.value = '';
+          confirmBtn.disabled = false;
+        }
+
+        // Initialize with all pages
+        renderPageOptions(allPages);
+
         confirmBtn.addEventListener('click', () => {
-          const selectedPageId = pageSelect.value;
           if (selectedPageId) {
             // Store the selected page ID for later use
             this.selectedPageId = selectedPageId;
             this.startNoteTaking();
             this.removeBanner();
           }
-        });
-
-        backBtn.addEventListener('click', () => {
-          this.showNoteTakingPrompt();
         });
 
         cancelBtn.addEventListener('click', () => {
@@ -330,11 +470,13 @@ class MeetingDetector {
             if (titleProp && Array.isArray(titleProp.title) && titleProp.title.length > 0) {
               extractedTitle = titleProp.title[0]?.text?.content || titleProp.title[0]?.plain_text || title;
             }
-            const opt = document.createElement('option');
-            opt.value = page.id;
-            opt.textContent = extractedTitle;
-            pageSelect.appendChild(opt);
-            pageSelect.value = page.id;
+
+            // Add new page to the in-memory list and UI
+            allPages = [{ ...page }, ...allPages];
+            renderPageOptions(allPages);
+            selectedPageId = page.id;
+            pageDropdownText.textContent = extractedTitle;
+            pageDropdownMenu.style.display = 'none';
             confirmBtn.disabled = false;
           } catch (e) {
             this.showError('Failed to create note: ' + e.message);
@@ -396,7 +538,7 @@ class MeetingDetector {
         position: fixed;
         top: 20px;
         right: 20px;
-        background: #dc3545;
+        background: #28a745;
         color: white;
         padding: 10px 15px;
         border-radius: 4px;
@@ -404,11 +546,39 @@ class MeetingDetector {
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
         font-size: 14px;
         box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+        display: flex;
+        align-items: center;
+        gap: 10px;
       ">
-        🔴 Recording Meeting Notes...
+        <iframe id="recording-lottie" src="https://lottie.host/embed/4ef724f0-57c9-46c3-9528-93bad640c135/jxygEXoASl.lottie" allowtransparency="true" style="
+          width: 28px;
+          height: 28px;
+          border: none;
+          background: transparent;
+          border-radius: 4px;
+        "></iframe>
+        <span>Recording Meeting Notes...</span>
+        <button id="stop-recording-btn" style="
+          background: #dc3545;
+          color: white;
+          border: none;
+          padding: 5px 10px;
+          border-radius: 3px;
+          cursor: pointer;
+          font-size: 12px;
+          font-weight: 500;
+        ">Stop Recording</button>
       </div>
     `;
     document.body.appendChild(indicator);
+
+    // Add event listener for stop recording button
+    const stopBtn = document.getElementById('stop-recording-btn');
+    if (stopBtn) {
+      stopBtn.addEventListener('click', () => {
+        this.stopNoteTaking();
+      });
+    }
   }
 
   hideRecordingIndicator() {
