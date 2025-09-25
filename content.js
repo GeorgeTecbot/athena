@@ -7,6 +7,9 @@ class MeetingDetector {
     this.audioChunks = [];
     this.mediaRecorder = null;
     this.meetingPlatform = this.detectPlatform();
+    this.participants = new Set();
+    this.participantObserver = null;
+    this.participantPollIntervalId = null;
     this.setupMeetingDetection();
     this.setupMessageListener();
     this.log('info', 'Content script initialized', { platform: this.meetingPlatform });
@@ -15,7 +18,7 @@ class MeetingDetector {
   detectPlatform() {
     const url = window.location.href;
     if (url.includes('meet.google.com')) return 'google-meet';
-    if (url.includes('zoom.us')) return 'zoom';
+    if (/\.zoom\.us\//.test(url) || url.includes('zoom.us')) return 'zoom';
     if (url.includes('teams.microsoft.com') || url.includes('teams.live.com')) return 'teams';
     return 'unknown';
   }
@@ -38,6 +41,9 @@ class MeetingDetector {
     setInterval(() => {
       this.checkMeetingState();
     }, 5000);
+
+    // Start participant tracking
+    this.setupParticipantTracking();
   }
 
   checkMeetingState() {
@@ -84,16 +90,28 @@ class MeetingDetector {
   }
 
   detectZoom() {
-    // Check for Zoom meeting indicators
-    const meetingIndicators = [
-      '.meeting-client-view', // Main meeting view
-      '.meeting-control-bar', // Control bar
-      '.meeting-client-in-meeting' // In-meeting indicator
+    // Zoom Web Client indicators (cover multiple layouts and lazy loads)
+    const selectors = [
+      '.meeting-client',
+      '.meeting-client-inner',
+      '.footer-button__button',
+      '[aria-label="Participants"]',
+      '[aria-label="Share Screen"]',
+      'canvas#video-canvas, canvas[class*="video"]',
+      'div[class*="zm-video"]',
+      'div[role="toolbar"]',
+      '.footer__leave-btn, button[aria-label*="Leave"]'
     ];
-    
-    return meetingIndicators.some(selector => 
-      document.querySelector(selector)
-    );
+    const inMeeting = selectors.some(sel => document.querySelector(sel));
+    // Heuristic: hide states implying pre-join
+    const preJoinSelectors = [
+      'form#email',
+      'input[name="email"]',
+      'button#joinBtn',
+      'div.join-flow, .preview-join-container'
+    ];
+    const isPreJoin = preJoinSelectors.some(sel => document.querySelector(sel));
+    return inMeeting && !isPreJoin;
   }
 
   detectTeams() {
@@ -113,6 +131,10 @@ class MeetingDetector {
     console.log('Meeting started detected');
     this.log('info', 'Meeting started detected');
     this.showNoteTakingPrompt();
+    // Reset participants when a new meeting starts
+    this.participants = new Set();
+    // Trigger immediate participant scan
+    this.updateParticipants();
   }
 
   onMeetingEnded() {
@@ -121,6 +143,7 @@ class MeetingDetector {
     if (this.isNoteTaking) {
       this.stopNoteTaking();
     }
+    this.participants = new Set();
   }
 
   showNoteTakingPrompt() {
@@ -505,10 +528,11 @@ class MeetingDetector {
       };
       
       this.audioRecorder.onstop = () => {
-        this.processAudio();
+        this.processAudioSegments();
       };
       
-      this.audioRecorder.start();
+      // Request periodic chunks to bound segment size (e.g., 2 minutes)
+      this.audioRecorder.start(120000);
       
       // Show recording indicator
       this.showRecordingIndicator();
@@ -523,7 +547,7 @@ class MeetingDetector {
   stopNoteTaking() {
     if (this.audioRecorder && this.audioRecorder.state === 'recording') {
       this.audioRecorder.stop();
-      this.audioRecorder.stream.getTracks().forEach(track => track.stop());
+      try { this.audioRecorder.stream.getTracks().forEach(track => track.stop()); } catch {}
     }
     this.isNoteTaking = false;
     this.log('info', 'Stopped note taking');
@@ -588,19 +612,134 @@ class MeetingDetector {
     }
   }
 
-  async processAudio() {
+  setupParticipantTracking() {
     try {
-      const audioBlob = new Blob(this.audioChunks, { type: 'audio/webm' });
-      const audioData = await this.blobToBase64(audioBlob);
-      this.log('info', 'Processed audio blob', { size: audioData?.length });
-      
-      // Send to background script for processing
-      chrome.runtime.sendMessage({
-        action: 'processAudio',
-        audioData: audioData,
-        platform: this.meetingPlatform,
-        selectedPageId: this.selectedPageId
+      if (this.participantObserver) {
+        this.participantObserver.disconnect();
+      }
+      this.participantObserver = new MutationObserver(() => {
+        // Only process when in meeting to avoid noise
+        if (this.isInMeeting) this.updateParticipants();
       });
+      this.participantObserver.observe(document.body, { childList: true, subtree: true });
+    } catch {}
+
+    // Backup polling in case DOM mutations are missed or virtualized
+    if (this.participantPollIntervalId) clearInterval(this.participantPollIntervalId);
+    this.participantPollIntervalId = setInterval(() => {
+      if (this.isInMeeting) this.updateParticipants();
+    }, 3000);
+  }
+
+  updateParticipants() {
+    try {
+      const names = this.getCurrentParticipantNames();
+      const next = new Set(names);
+      // Detect joins
+      for (const name of next) {
+        if (!this.participants.has(name)) {
+          this.log('info', 'Participant joined', { name, platform: this.meetingPlatform });
+        }
+      }
+      // Detect leaves
+      for (const name of this.participants) {
+        if (!next.has(name)) {
+          this.log('info', 'Participant left', { name, platform: this.meetingPlatform });
+        }
+      }
+      this.participants = next;
+    } catch (e) {
+      // swallow
+    }
+  }
+
+  getCurrentParticipantNames() {
+    const results = new Set();
+    const add = (t) => {
+      if (!t) return;
+      const name = String(t).trim();
+      if (!name) return;
+      // Filter out generic labels
+      if (/participants|invite|you|muted|unmuted/i.test(name) && name.length < 20) return;
+      results.add(name);
+    };
+
+    try {
+      switch (this.meetingPlatform) {
+        case 'google-meet': {
+          // Common selectors for Meet participant names
+          const selectors = [
+            '[role="listitem"] .zWGUib',
+            '[role="listitem"] .ZjFb7c',
+            '[data-self-name]'
+          ];
+          selectors.forEach(sel => document.querySelectorAll(sel).forEach(el => add(el.textContent)));
+          break;
+        }
+        case 'zoom': {
+          // Zoom Web Client
+          const selectors = [
+            '.participants-item__display-name',
+            '.participants-item__name',
+            '[class*="participants"] [class*="display-name"]'
+          ];
+          selectors.forEach(sel => document.querySelectorAll(sel).forEach(el => add(el.textContent)));
+          break;
+        }
+        case 'teams': {
+          const selectors = [
+            '[data-tid="participant-item"]',
+            '[data-tid="roster-list"] [role="listitem"]',
+            '[data-tid="participant-name"]'
+          ];
+          selectors.forEach(sel => document.querySelectorAll(sel).forEach(el => add(el.textContent)));
+          break;
+        }
+        default: {
+          // Fallback: attempt to read common participant containers
+          const selectors = [
+            '[role="listitem"]',
+            '[aria-label*="participant"]'
+          ];
+          selectors.forEach(sel => document.querySelectorAll(sel).forEach(el => add(el.textContent)));
+        }
+      }
+    } catch {}
+
+    return Array.from(results).slice(0, 500);
+  }
+
+  async processAudioSegments() {
+    try {
+      const jobId = `${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
+      const totalSegments = this.audioChunks.length;
+      this.log('info', 'Processed audio blob', { segments: totalSegments, jobId });
+
+      // Start job
+      this.log('info', 'Sending startJob message', { jobId, totalSegments });
+      const startResponse = await chrome.runtime.sendMessage({ action: 'startJob', jobId, platform: this.meetingPlatform, selectedPageId: this.selectedPageId, totalSegments });
+      this.log('info', 'StartJob response', { success: startResponse?.success, error: startResponse?.error });
+
+      // Small delay to ensure job is created before sending segments
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      // Send segments in sequence (as base64 to avoid ArrayBuffer transfer issues)
+      for (let i = 0; i < totalSegments; i++) {
+        const blob = this.audioChunks[i];
+        this.log('info', 'Processing segment', { index: i, blobSize: blob.size, blobType: blob.type });
+        const base64 = await this.blobToBase64(blob);
+        this.log('info', 'Segment base64 prepared', { index: i, base64Len: base64?.length });
+        
+        this.log('info', 'Sending processAudioSegment message', { jobId, segmentIndex: i, base64Len: base64?.length });
+        const segmentResponse = await chrome.runtime.sendMessage({ 
+          action: 'processAudioSegment', 
+          jobId, 
+          segmentIndex: i, 
+          totalSegments, 
+          base64
+        });
+        this.log('info', 'ProcessAudioSegment response', { success: segmentResponse?.success, error: segmentResponse?.error });
+      }
       
     } catch (error) {
       console.error('Error processing audio:', error);

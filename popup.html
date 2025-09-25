@@ -236,6 +236,15 @@
       
       <div id="connectionStatus" class="status" style="display:none; margin-top:10px;"></div>
     </div>
+
+    <div class="settings-panel">
+      <h3>Logs</h3>
+      <div style="display:flex;align-items:center;gap:10px; margin-bottom:10px;">
+        <button id="refreshLogs" class="button" style="flex:0 0 auto;width:auto;padding:8px 12px;"><span class="material-icons" style="vertical-align:middle;">refresh</span></button>
+        <button id="clearLogs" class="button" style="flex:0 0 auto;width:auto;padding:8px 12px;background:#6c757d;"><span class="material-icons" style="vertical-align:middle;">clear_all</span></button>
+      </div>
+      <div id="logs" style="height:220px;overflow:auto;border:1px solid #ddd;border-radius:4px;padding:8px;font-family:Menlo,Consolas,monospace;font-size:11px;background:#fafafa;color:#333333; white-space:pre;"></div>
+    </div>
   </div>
 
   <!-- Main View -->
@@ -248,6 +257,8 @@
     <div class="meeting-status" id="meetingStatus">
       <div>No active meeting detected</div>
     </div>
+
+    
 
     <!-- Database and Notes Selection (hidden by default) -->
     <div id="databasePanel" class="settings-panel" style="display: none;">
@@ -299,19 +310,18 @@
     </div>
 
     <div class="config-section">
-      <h3>Debug</h3>
-      <div class="input-group" style="display:flex;align-items:center;gap:10px;white-space:nowrap;">
-        <label for="debugToggle" style="margin:0;flex:1;">Enable debug logging</label>
-        <input type="checkbox" id="debugToggle" style="margin-left:auto;" />
+      <h3>Processing Jobs</h3>
+      <div id="jobsStatus" class="status" style="display:none; margin-bottom:10px;"></div>
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+        <button id="refreshJobs" class="button" style="flex:0 0 auto;width:auto;padding:8px 12px;"><span class="material-icons" style="vertical-align:middle;">refresh</span></button>
+        <button id="clearCompletedJobs" class="button" style="flex:0 0 auto;width:auto;padding:8px 12px;background:#6c757d;"><span class="material-icons" style="vertical-align:middle;">clear_all</span></button>
       </div>
-      <div id="debugControls" style="display:none;">
-        <div style="display:flex;align-items:center;gap:10px; margin-bottom:10px;">
-          <button id="refreshLogs" class="button" style="flex:0 0 auto;width:auto;padding:8px 12px;"><span class="material-icons" style="vertical-align:middle;">refresh</span></button>
-          <button id="clearLogs" class="button" style="flex:0 0 auto;width:auto;padding:8px 12px;background:#6c757d;"><span class="material-icons" style="vertical-align:middle;">clear_all</span></button>
-        </div>
-        <div id="logs" style="height:180px;overflow:auto;border:1px solid #ddd;border-radius:4px;padding:8px;font-family:Menlo,Consolas,monospace;font-size:11px;background:#fafafa;"></div>
+      <div id="jobsList" style="max-height:200px; overflow:auto; border:1px solid #ddd; border-radius:4px; background:#fff;">
+        <!-- Jobs will be rendered here -->
       </div>
     </div>
+
+    
 
     <div id="status" class="status" style="display: none;"></div>
 

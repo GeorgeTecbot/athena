@@ -30,16 +30,22 @@ document.addEventListener('DOMContentLoaded', function() {
   const saveDefaultPageBtn = document.getElementById('saveDefaultPage');
   const clearDefaultPageBtn = document.getElementById('clearDefaultPage');
   const defaultPageStatus = document.getElementById('defaultPageStatus');
-  const debugToggle = document.getElementById('debugToggle');
   const logsDiv = document.getElementById('logs');
   const refreshLogsBtn = document.getElementById('refreshLogs');
   const clearLogsBtn = document.getElementById('clearLogs');
   const settingsBtn = document.getElementById('settingsBtn');
+  
   const settingsPanel = document.getElementById('settingsPanel');
   const newNoteModal = document.getElementById('newNoteModal');
   const newNoteTitleInput = document.getElementById('newNoteTitle');
   const createNewNoteBtn = document.getElementById('createNewNote');
   const cancelNewNoteBtn = document.getElementById('cancelNewNote');
+
+  // Jobs UI
+  const refreshJobsBtn = document.getElementById('refreshJobs');
+  const clearCompletedJobsBtn = document.getElementById('clearCompletedJobs');
+  const jobsListDiv = document.getElementById('jobsList');
+  const jobsStatusDiv = document.getElementById('jobsStatus');
 
   // Load saved configuration
   loadConfig();
@@ -54,18 +60,16 @@ document.addEventListener('DOMContentLoaded', function() {
   pageSearchInput.addEventListener('input', filterPages);
   createNewNoteInDropdown.addEventListener('click', createNewNoteFromDropdown);
   startStopRecordingBtn.addEventListener('click', onStartStopClick);
-  debugToggle.addEventListener('change', () => {
-    const on = debugToggle.checked;
-    const controls = document.getElementById('debugControls');
-    if (controls) controls.style.display = on ? 'block' : 'none';
-    saveDebugToggle();
-  });
   refreshLogsBtn.addEventListener('click', loadLogs);
   clearLogsBtn.addEventListener('click', clearLogs);
+  if (refreshJobsBtn) refreshJobsBtn.addEventListener('click', loadJobs);
+  if (clearCompletedJobsBtn) clearCompletedJobsBtn.addEventListener('click', clearCompletedJobs);
   settingsBtn.addEventListener('click', showSettings);
   backBtn.addEventListener('click', showMain);
   createNewNoteBtn.addEventListener('click', createNewNote);
   cancelNewNoteBtn.addEventListener('click', closeNewNoteModal);
+
+  
 
   // Check for active meeting
   checkMeetingStatus();
@@ -122,23 +126,17 @@ document.addEventListener('DOMContentLoaded', function() {
           }
           
           // Set selected page if available
-      if (config.defaultNotionPageId && config.defaultNotionPageTitle) {
+          if (config.defaultNotionPageId && config.defaultNotionPageTitle) {
             selectedPageId = config.defaultNotionPageId;
             pageDropdownText.textContent = config.defaultNotionPageTitle;
           }
         }
       }
       
-      debugToggle.checked = !!config.debugEnabled;
-      await loadLogs();
+      await Promise.all([loadLogs(), loadJobs()]);
     } catch (error) {
       showStatus('Error loading configuration', 'error');
     }
-  }
-
-  async function saveDebugToggle() {
-    await chrome.storage.sync.set({ debugEnabled: debugToggle.checked });
-    showStatus(`Debug ${debugToggle.checked ? 'enabled' : 'disabled'}`, 'success');
   }
 
   async function saveConfig() {
@@ -372,7 +370,7 @@ document.addEventListener('DOMContentLoaded', function() {
     try {
       const resp = await chrome.runtime.sendMessage({ action: 'getLogs' });
       if (!resp || !resp.success) throw new Error(resp?.error || 'Failed to fetch logs');
-      const lines = resp.logs.map(l => `${new Date(l.t).toLocaleTimeString()} [${l.level}] ${l.msg}`);
+      const lines = resp.logs.map(l => `${new Date(l.t).toLocaleString()} [${l.level}] ${l.msg}${l.meta ? ' ' + JSON.stringify(l.meta) : ''}`);
       logsDiv.textContent = lines.join('\n');
       logsDiv.scrollTop = logsDiv.scrollHeight;
     } catch (e) {
@@ -385,24 +383,66 @@ document.addEventListener('DOMContentLoaded', function() {
     await loadLogs();
   }
 
+  // Jobs: load/render/clear
+  async function loadJobs() {
+    try {
+      const resp = await chrome.runtime.sendMessage({ action: 'getJobs' });
+      if (!resp || !resp.success) throw new Error(resp?.error || 'Failed to fetch jobs');
+      const jobs = resp.jobs || [];
+      renderJobs(jobs);
+    } catch (e) {
+      if (jobsStatusDiv) showInline(jobsStatusDiv, 'Error loading jobs: ' + e.message, 'error');
+    }
+  }
+
+  function renderJobs(jobs) {
+    if (!jobsListDiv) return;
+    jobsListDiv.innerHTML = '';
+    if (jobs.length === 0) {
+      jobsListDiv.innerHTML = '<div style="padding:10px;color:#666;">No jobs</div>';
+      return;
+    }
+    jobs.slice().reverse().forEach(job => {
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:8px 10px;border-bottom:1px solid #eee;font-size:12px;color:#333;';
+      const left = document.createElement('div');
+      left.textContent = new Date(job.createdAt).toLocaleString();
+      const middle = document.createElement('div');
+      middle.textContent = job.selectedPageTitle || job.platform || 'unknown';
+      middle.style.flex = '1';
+      middle.style.margin = '0 8px';
+      const right = document.createElement('div');
+      const statusColors = { processing: '#0b5cad', completed: '#1e7e34', error: '#a12622' };
+      right.textContent = job.status;
+      right.style.fontWeight = '600';
+      right.style.color = statusColors[job.status] || '#333';
+      row.appendChild(left);
+      row.appendChild(middle);
+      row.appendChild(right);
+      jobsListDiv.appendChild(row);
+    });
+  }
+
+  async function clearCompletedJobs() {
+    try {
+      await chrome.runtime.sendMessage({ action: 'clearCompletedJobs' });
+      await loadJobs();
+    } catch (e) {
+      if (jobsStatusDiv) showInline(jobsStatusDiv, 'Error clearing jobs: ' + e.message, 'error');
+    }
+  }
+
   function showSettings() {
     mainView.style.display = 'none';
     settingsView.style.display = 'block';
+    // Auto-refresh logs when entering settings
+    loadLogs();
   }
 
   function showMain() {
     settingsView.style.display = 'none';
     mainView.style.display = 'block';
-  }
-
-  function openNewNoteModal() {
-    newNoteTitleInput.value = '';
-    newNoteModal.style.display = 'flex';
-    newNoteTitleInput.focus();
-  }
-
-  function closeNewNoteModal() {
-    newNoteModal.style.display = 'none';
+    loadJobs();
   }
 
   async function createNewNote() {
@@ -437,6 +477,16 @@ document.addEventListener('DOMContentLoaded', function() {
     } catch (e) {
       showInline(defaultPageStatus, `Error: ${e.message}`, 'error');
     }
+  }
+
+  function openNewNoteModal() {
+    newNoteTitleInput.value = '';
+    newNoteModal.style.display = 'flex';
+    newNoteTitleInput.focus();
+  }
+
+  function closeNewNoteModal() {
+    newNoteModal.style.display = 'none';
   }
 
   async function testConnection() {
@@ -510,21 +560,21 @@ document.addEventListener('DOMContentLoaded', function() {
       let startCursor = undefined;
 
       while (hasMore) {
-      const res = await fetch(`https://api.notion.com/v1/databases/${notionDatabaseId}/query`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${notionToken}`,
-          'Notion-Version': '2022-06-28',
-          'Content-Type': 'application/json'
-        },
+        const res = await fetch(`https://api.notion.com/v1/databases/${notionDatabaseId}/query`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${notionToken}`,
+            'Notion-Version': '2022-06-28',
+            'Content-Type': 'application/json'
+          },
           body: JSON.stringify({ 
             page_size: 50,
             start_cursor: startCursor
           })
-      });
+        });
 
-      if (!res.ok) throw new Error('Failed to fetch pages');
-      const data = await res.json();
+        if (!res.ok) throw new Error('Failed to fetch pages');
+        const data = await res.json();
         
         allPages = allPages.concat(data.results);
         hasMore = data.has_more;
@@ -564,7 +614,6 @@ document.addEventListener('DOMContentLoaded', function() {
       showInline(databaseStatus, `Error loading pages: ${e.message}`, 'error');
     }
   }
-
 
   async function startNoteTaking() {
     try {

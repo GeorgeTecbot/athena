@@ -3,15 +3,28 @@ class MeetingNotesProcessor {
   constructor() {
     this.setupMessageListener();
     this.buffer = [];
-    this.maxLogs = 500;
+    this.maxLogs = 2000;
+    this.loadLogsFromStorage();
+    this.jobs = [];
+    this.maxJobs = 50;
+    this.loadJobsFromStorage();
   }
 
   setupMessageListener() {
     chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       switch (request.action) {
-        case 'processAudio':
-          this.processAudioWithGemini(request.audioData, request.platform, request.selectedPageId);
-          break;
+        
+        case 'startJob':
+          this.startSegmentedJob(request.jobId, request.platform, request.selectedPageId, request.totalSegments).then(() => {
+            sendResponse({ success: true });
+          }).catch(e => {
+            sendResponse({ success: false, error: String(e) });
+          });
+          return true;
+        case 'processAudioSegment':
+          this.processAudioSegment(request.jobId, request.segmentIndex, request.totalSegments, request.buffer, request.uint8Array, request.base64).then(() => sendResponse({ success: true })).catch(e => sendResponse({ success: false, error: String(e) }));
+          return true;
+        // Old chunked audio system removed - using segmented system only
         case 'createNotionPage':
           this.createNotionPage(request.title).then(sendResponse);
           return true;
@@ -35,30 +48,443 @@ class MeetingNotesProcessor {
         case 'appendToNotionPage':
           this.appendToNotionPage(request.pageId, request.notes).then(sendResponse);
           return true; // Keep message channel open for async response
+        case 'getJobs':
+          (async () => {
+            try {
+              // Ensure we return the latest from storage in case the worker just started
+              const { jobs } = await chrome.storage.local.get(['jobs']);
+              if (Array.isArray(jobs) && jobs.length > 0) {
+                this.jobs = jobs.slice(-this.maxJobs);
+              }
+              const safe = (this.jobs || []).map(j => ({ ...j, audioData: undefined }));
+              sendResponse({ success: true, jobs: safe });
+            } catch (e) {
+              sendResponse({ success: true, jobs: (this.jobs || []).map(j => ({ ...j, audioData: undefined })) });
+            }
+          })();
+          return true;
+        case 'clearCompletedJobs':
+          this.jobs = this.jobs.filter(j => j.status === 'processing' || j.status === 'queued');
+          this.saveJobsToStorage();
+          sendResponse({ success: true });
+          break;
         default:
           sendResponse({ success: false, error: 'Unknown action' });
       }
     });
   }
 
-  async isDebugEnabled() {
-    const { debugEnabled } = await chrome.storage.sync.get(['debugEnabled']);
-    return !!debugEnabled;
-  }
+  // Logging is always enabled; no toggle
 
   async addLog(level, msg, meta) {
-    const debug = await this.isDebugEnabled();
-    if (!debug && level !== 'error') return;
     const entry = { t: Date.now(), level, msg, meta };
     this.buffer.push(entry);
     if (this.buffer.length > this.maxLogs) this.buffer.shift();
-    // Also mirror to console for dev
+    try { await chrome.storage.local.set({ logs: this.buffer }); } catch {}
     try { console[level] ? console[level](msg, meta) : console.log(msg, meta); } catch {}
   }
 
-  async processAudioWithGemini(audioData, platform, selectedPageId = null) {
+  async loadLogsFromStorage() {
     try {
-      await this.addLog('info', 'Processing audio with Gemini', { platform, size: audioData?.length });
+      const { logs } = await chrome.storage.local.get(['logs']);
+      if (Array.isArray(logs)) {
+        this.buffer = logs.slice(-this.maxLogs);
+      }
+    } catch {}
+  }
+
+  async loadJobsFromStorage() {
+    try {
+      const { jobs } = await chrome.storage.local.get(['jobs']);
+      if (Array.isArray(jobs)) {
+        // Only keep jobs that have segments (new segmented system)
+        // Clear out old jobs that use audioData (old system)
+        const oldJobs = jobs.filter(job => !Array.isArray(job.segments) || job.audioData);
+        if (oldJobs.length > 0) {
+          await this.addLog('info', 'Clearing old jobs from storage', { count: oldJobs.length });
+        }
+        
+        this.jobs = jobs.slice(-this.maxJobs).filter(job => 
+          Array.isArray(job.segments) && !job.audioData
+        );
+      }
+      // Resume any queued or processing segmented jobs
+      const toResume = this.jobs.filter(j => 
+        (j.status === 'queued' || j.status === 'processing') && 
+        Array.isArray(j.segments)
+      );
+      for (const job of toResume) {
+        // Only resume if all segments are present
+        if (job.segments.filter(Boolean).length === job.totalSegments) {
+          this.processSegmentedJob(job.id).catch(() => {});
+        }
+      }
+    } catch {}
+  }
+
+  async saveJobsToStorage() {
+    try {
+      // Strip large audio payloads before persisting to avoid quota issues
+      const liteJobs = this.jobs.slice(-this.maxJobs).map(j => ({ ...j, audioData: undefined }));
+      await chrome.storage.local.set({ jobs: liteJobs });
+    } catch (e) {
+      await this.addLog('error', 'Failed to persist jobs (likely quota)', { error: String(e) });
+    }
+  }
+
+  async enqueueJob(audioData, platform, selectedPageId, providedJobId = null) {
+    const id = providedJobId || `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    // Try to resolve a human-readable page title for the job
+    let selectedPageTitle = null;
+    try {
+      const syncVals = await chrome.storage.sync.get(['defaultNotionPageId', 'defaultNotionPageTitle', 'storedPages']);
+      const localVals = await chrome.storage.local.get(['storedPages']);
+      if (selectedPageId && syncVals.defaultNotionPageId === selectedPageId && syncVals.defaultNotionPageTitle) {
+        selectedPageTitle = syncVals.defaultNotionPageTitle;
+      } else {
+        const pages = (syncVals.storedPages || localVals.storedPages || []);
+        const match = pages.find(p => p && p.id === selectedPageId);
+        if (match && match.title) selectedPageTitle = match.title;
+      }
+    } catch {}
+    const job = {
+      id,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      status: 'queued', // queued | processing | completed | error
+      platform: platform || 'unknown',
+      selectedPageId: selectedPageId || null,
+      selectedPageTitle: selectedPageTitle || null,
+      audioData, // optional initial data (short recordings)
+      audioChunks: [], // for large recordings appended in chunks
+      totalChunks: 0,
+      error: null
+    };
+    this.jobs.push(job);
+    if (this.jobs.length > this.maxJobs) this.jobs.shift();
+    await this.saveJobsToStorage();
+    await this.addLog('info', 'Job enqueued', { jobId: id, platform });
+    this.processJob(job).catch(() => {});
+    return { id: job.id, status: job.status, createdAt: job.createdAt };
+  }
+
+  async startSegmentedJob(jobId, platform, selectedPageId, totalSegments) {
+    // Create a queued job placeholder for segmented processing
+    const exists = this.jobs.find(j => j.id === jobId);
+    if (!exists) {
+      this.jobs.push({
+        id: jobId,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        status: 'queued',
+        platform: platform || 'unknown',
+        selectedPageId: selectedPageId || null,
+        selectedPageTitle: null,
+        segments: [],
+        totalSegments: totalSegments || 0,
+        error: null
+      });
+      await this.saveJobsToStorage();
+      await this.addLog('info', 'Segmented job started', { jobId, totalSegments });
+    }
+  }
+
+  async processAudioSegment(jobId, segmentIndex, totalSegments, buffer, uint8Array, base64) {
+    await this.addLog('info', 'Received audio segment', { 
+      jobId, 
+      segmentIndex, 
+      totalSegments, 
+      bufferSize: buffer?.byteLength,
+      uint8ArrayLength: uint8Array?.length,
+      bufferType: buffer?.constructor?.name,
+      base64Len: base64?.length
+    });
+    
+    // First try to find job in memory
+    let idx = this.jobs.findIndex(j => j.id === jobId);
+    
+    // If not found in memory, try to reload from storage
+    if (idx === -1) {
+      await this.addLog('info', 'Job not in memory, reloading from storage', { jobId });
+      await this.loadJobsFromStorage();
+      idx = this.jobs.findIndex(j => j.id === jobId);
+    }
+    
+    if (idx === -1) {
+      await this.addLog('error', 'Job not found for segment', { jobId, segmentIndex, availableJobs: this.jobs.map(j => j.id) });
+      throw new Error('Job not found');
+    }
+    
+    const job = this.jobs[idx];
+    if (!Array.isArray(job.segments)) job.segments = [];
+
+    // Prefer base64 if provided for robustness
+    if (typeof base64 === 'string' && base64.length > 0) {
+      job.segments[segmentIndex] = { kind: 'base64', data: base64 };
+    } else {
+      // Use ArrayBuffer if valid, otherwise reconstruct from Uint8Array
+      let finalBuffer = buffer;
+      if (!buffer || buffer.byteLength === 0) {
+        if (uint8Array && uint8Array.length > 0) {
+          await this.addLog('info', 'Reconstructing ArrayBuffer from Uint8Array', { uint8ArrayLength: uint8Array.length });
+          finalBuffer = new Uint8Array(uint8Array).buffer;
+        } else {
+          await this.addLog('error', 'Both buffer and uint8Array are empty and no base64 provided', { jobId, segmentIndex });
+          throw new Error('Empty audio data');
+        }
+      }
+      job.segments[segmentIndex] = { kind: 'buffer', data: finalBuffer }; // ArrayBuffer
+    }
+    job.totalSegments = totalSegments;
+    job.updatedAt = Date.now();
+    await this.saveJobsToStorage();
+
+    const receivedCount = job.segments.filter(Boolean).length;
+    await this.addLog('info', 'Segment stored', { jobId, segmentIndex, receivedCount, totalSegments });
+
+    // When all received, process sequentially with Gemini per segment and merge
+    if (receivedCount === totalSegments) {
+      await this.addLog('info', 'All segments received', { jobId, totalSegments });
+      this.processSegmentedJob(jobId).catch(async (e) => {
+        await this.addLog('error', 'Segmented job failed', { jobId, error: String(e) });
+      });
+    }
+  }
+
+  async processSegmentedJob(jobId) {
+    const idx = this.jobs.findIndex(j => j.id === jobId);
+    if (idx === -1) throw new Error('Job not found');
+    const job = this.jobs[idx];
+    const acquired = await this.tryAcquireJob(jobId);
+    if (!acquired) {
+      await this.addLog('info', 'Job lock not acquired (segmented), skipping', { jobId });
+      return;
+    }
+    await this.addLog('info', 'Segmented processing started', { jobId, segments: job.segments.length });
+
+    const partialTranscripts = [];
+    for (let i = 0; i < job.segments.length; i++) {
+      const seg = job.segments[i];
+      if (!seg) continue;
+      let base64;
+      if (seg.kind === 'base64') {
+        base64 = seg.data;
+      } else if (seg.kind === 'buffer') {
+        base64 = await this.arrayBufferToBase64(seg.data);
+      } else {
+        await this.addLog('error', 'Unknown segment kind', { jobId, i, kind: seg.kind });
+        continue;
+      }
+      const notes = await this.callGeminiForAudio(base64, job.platform, jobId, i, job.segments.length);
+      partialTranscripts.push(notes.transcript || '');
+    }
+
+    // Combine transcripts and ask Gemini for a single structured summary
+    const combined = partialTranscripts.join('\n');
+    const structured = await this.callGeminiForSummary(combined, jobId);
+
+    const pageId = job.selectedPageId || (await chrome.storage.sync.get(['defaultNotionPageId'])).defaultNotionPageId;
+    if (pageId) {
+      const res = await this.appendToNotionPage(pageId, structured);
+      if (!res.success) throw new Error(res.error || 'Append failed');
+    }
+
+    // Mark complete
+    const ref = this.jobs[idx];
+    ref.status = 'completed';
+    ref.updatedAt = Date.now();
+    await this.saveJobsToStorage();
+    await this.addLog('info', 'Segmented job completed', { jobId });
+  }
+
+  async arrayBufferToBase64(buf) {
+    await this.addLog('info', 'Converting ArrayBuffer to base64', { bufferSize: buf?.byteLength });
+    
+    if (!buf || buf.byteLength === 0) {
+      throw new Error('Empty or invalid ArrayBuffer');
+    }
+    
+    const blob = new Blob([new Uint8Array(buf)], { type: 'audio/webm' });
+    await this.addLog('info', 'Created blob', { blobSize: blob.size, blobType: blob.type });
+    
+    return await new Promise((resolve, reject) => {
+      const fr = new FileReader();
+      fr.onload = () => {
+        const s = fr.result || '';
+        const i = s.indexOf(',');
+        const base64 = i >= 0 ? s.substring(i + 1) : s;
+        this.addLog('info', 'Base64 conversion complete', { 
+          dataUrlLength: s.length, 
+          base64Length: base64.length,
+          prefix: s.substring(0, 50) 
+        });
+        resolve(base64);
+      };
+      fr.onerror = () => {
+        this.addLog('error', 'FileReader error', { error: String(fr.error) });
+        reject(fr.error || new Error('FileReader error'));
+      };
+      fr.readAsDataURL(blob);
+    });
+  }
+
+  async callGeminiForAudio(base64Audio, platform, jobId, segmentIndex, totalSegments) {
+    await this.addLog('info', 'Calling Gemini for segment', { jobId, segmentIndex, totalSegments, base64Length: base64Audio?.length });
+    
+    // Validate base64 string
+    if (!base64Audio || typeof base64Audio !== 'string') {
+      await this.addLog('error', 'Invalid base64 audio data', { jobId, segmentIndex, type: typeof base64Audio });
+      throw new Error('Invalid base64 audio data');
+    }
+    
+    // Check if base64 is valid
+    try {
+      atob(base64Audio.substring(0, 100)); // Test first 100 chars
+    } catch (e) {
+      await this.addLog('error', 'Invalid base64 encoding', { jobId, segmentIndex, error: String(e) });
+      throw new Error('Invalid base64 encoding');
+    }
+    
+    const config = await chrome.storage.sync.get(['geminiApiKey']);
+    if (!config.geminiApiKey) {
+      throw new Error('Gemini API key not configured');
+    }
+    
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key=${config.geminiApiKey}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [
+          { text: 'Transcribe the audio and return plain transcript text only.' },
+          { inline_data: { mime_type: 'audio/webm', data: base64Audio } }
+        ]}]
+      })
+    });
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      await this.addLog('error', 'Gemini audio segment error', { 
+        jobId, 
+        segmentIndex, 
+        status: response.status, 
+        error: errorText.substring(0, 500) 
+      });
+      throw new Error(`Gemini segment error: ${response.status} - ${errorText.substring(0, 200)}`);
+    }
+    
+    const result = await response.json();
+    const text = result.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    await this.addLog('info', 'Gemini segment response received', { jobId, segmentIndex, transcriptLength: text.length });
+    return { transcript: text };
+  }
+
+  async callGeminiForSummary(fullTranscript, jobId) {
+    await this.addLog('info', 'Calling Gemini for summary', { jobId, transcriptLen: fullTranscript.length });
+    const config = await chrome.storage.sync.get(['geminiApiKey']);
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key=${config.geminiApiKey}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [
+          { text: `Please analyze this transcript and return JSON with keys transcript, summary, actionItems[], decisions[], attendees[]. Transcript follows:\n${fullTranscript}` }
+        ]}],
+        generationConfig: { temperature: 0.2, responseMimeType: 'application/json' }
+      })
+    });
+    if (!response.ok) throw new Error(`Gemini summary error: ${response.status}`);
+    const result = await response.json();
+    const raw = result.candidates?.[0]?.content?.parts?.[0]?.text || '{}';
+    return JSON.parse(raw);
+  }
+
+  async appendAudioChunk(jobId, binaryChunk, index, total) {
+    const memIdx = this.jobs.findIndex(j => j.id === jobId);
+    if (memIdx === -1) throw new Error('Job not found');
+    const job = this.jobs[memIdx];
+    if (!Array.isArray(job.audioChunks)) job.audioChunks = [];
+    // Store as typed arrays; convert later to base64 once
+    job.audioChunks[index] = binaryChunk; // ArrayBuffer
+    job.totalChunks = total;
+    job.updatedAt = Date.now();
+    await this.saveJobsToStorage();
+    // When all chunks present, auto-finalize
+    if (job.audioChunks.filter(Boolean).length === total) {
+      await this.finalizeAudio(jobId);
+    }
+  }
+
+  async finalizeAudio(jobId) {
+    const memIdx = this.jobs.findIndex(j => j.id === jobId);
+    if (memIdx === -1) throw new Error('Job not found');
+    const job = this.jobs[memIdx];
+    if (!job.audioData && Array.isArray(job.audioChunks) && job.audioChunks.length > 0) {
+      // Concatenate ArrayBuffers
+      const parts = job.audioChunks.map(buf => new Uint8Array(buf));
+      const totalLen = parts.reduce((sum, u) => sum + u.byteLength, 0);
+      const merged = new Uint8Array(totalLen);
+      let offset = 0;
+      for (const u of parts) { merged.set(u, offset); offset += u.byteLength; }
+      job.audioChunks = [];
+
+      // Encode to base64 using FileReader to avoid stack/arg limits
+      const blob = new Blob([merged], { type: 'audio/webm' });
+      const base64 = await new Promise((resolve, reject) => {
+        try {
+          const fr = new FileReader();
+          fr.onload = () => {
+            const result = fr.result || '';
+            const idx = result.indexOf(',');
+            resolve(idx >= 0 ? result.substring(idx + 1) : result);
+          };
+          fr.onerror = () => reject(fr.error || new Error('FileReader error'));
+          fr.readAsDataURL(blob);
+        } catch (e) {
+          reject(e);
+        }
+      });
+      job.audioData = base64;
+      job.updatedAt = Date.now();
+      await this.saveJobsToStorage();
+      await this.addLog('info', 'Audio finalized for job', { jobId, bytes: totalLen, base64Len: job.audioData.length });
+    }
+    // Kick processing
+    this.processJob(job).catch(() => {});
+  }
+
+  async processJob(job) {
+    try {
+      const acquired = await this.tryAcquireJob(job.id);
+      if (!acquired) {
+        await this.addLog('info', 'Job lock not acquired, skipping duplicate runner', { jobId: job.id });
+        return;
+      }
+      await this.addLog('info', 'Job processing started', { jobId: job.id });
+      const result = await this.processAudioWithGemini(job.audioData, job.platform, job.selectedPageId, job.id);
+      // Append to Notion (handled inside processAudioWithGemini). If success, mark completed on the canonical job entry
+      const memIdx = this.jobs.findIndex(j => j.id === job.id);
+      const ref = memIdx !== -1 ? this.jobs[memIdx] : job;
+      ref.status = 'completed';
+      ref.updatedAt = Date.now();
+      ref.audioData = undefined; // free memory
+      if (memIdx !== -1) this.jobs[memIdx] = ref;
+      await this.saveJobsToStorage();
+      await this.addLog('info', 'Job completed', { jobId: job.id });
+    } catch (error) {
+      const memIdx = this.jobs.findIndex(j => j.id === job.id);
+      const ref = memIdx !== -1 ? this.jobs[memIdx] : job;
+      ref.status = 'error';
+      ref.error = String(error);
+      ref.updatedAt = Date.now();
+      ref.audioData = undefined;
+      if (memIdx !== -1) this.jobs[memIdx] = ref;
+      await this.saveJobsToStorage();
+      await this.addLog('error', 'Job failed', { jobId: job.id, error: String(error) });
+    }
+  }
+
+  async processAudioWithGemini(audioData, platform, selectedPageId = null, jobId = null) {
+    try {
+      await this.addLog('info', 'Processing audio with Gemini', { jobId, platform, size: audioData?.length });
       const config = await chrome.storage.sync.get(['geminiApiKey', 'notionToken', 'notionDatabaseId']);
       
       if (!config.geminiApiKey) {
@@ -66,7 +492,7 @@ class MeetingNotesProcessor {
       }
 
       // Convert base64 audio to blob for Gemini API
-      const audioBlob = this.base64ToBlob(audioData, 'audio/webm');
+      const audioBlob = await this.base64StringToBlob(audioData, 'audio/webm');
       
       // Use Gemini API to process audio
       const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key=${config.geminiApiKey}`, {
@@ -93,21 +519,22 @@ class MeetingNotesProcessor {
       });
 
       if (!response.ok) {
-        await this.addLog('error', 'Gemini API error', { status: response.status });
+        await this.addLog('error', 'Gemini API error', { jobId, status: response.status });
         throw new Error(`Gemini API error: ${response.status}`);
       }
 
       const result = await response.json();
-      await this.addLog('info', 'Gemini response received');
+      await this.addLog('info', 'Gemini response received', { jobId });
       
       // Log the raw response from Gemini
       const rawResponse = result.candidates[0].content.parts[0].text;
-      await this.addLog('info', 'Raw Gemini response', { response: rawResponse });
+      await this.addLog('info', 'Raw Gemini response', { jobId, response: rawResponse });
       
       const notes = JSON.parse(rawResponse);
       
       // Log the parsed structured notes
       await this.addLog('info', 'Parsed structured notes', { 
+        jobId,
         transcript: notes.transcript?.substring(0, 200) + '...',
         summary: notes.summary,
         actionItems: notes.actionItems,
@@ -124,38 +551,42 @@ class MeetingNotesProcessor {
       }
 
       if (targetPageId) {
-        await this.addLog('info', 'Appending to selected/default Notion page', { page: targetPageId });
+        await this.addLog('info', 'Appending to selected/default Notion page', { jobId, page: targetPageId });
         const appendRes = await this.appendToNotionPage(targetPageId, notes);
         if (!appendRes.success) {
-          await this.addLog('error', 'Append failed; falling back to manual selection', { error: appendRes.error });
+          await this.addLog('error', 'Append failed; falling back to manual selection', { jobId, error: appendRes.error });
           // Fallback to manual selection if append fails
           this.showNotionPageSelection(notes, platform);
         } else {
-          await this.addLog('info', 'Notes appended to page');
+          await this.addLog('info', 'Notes appended to page', { jobId });
           // Notify success in active tab
           this.notifyInActiveTab('Notes appended to your Notion page.');
         }
       } else {
-        await this.addLog('info', 'No page selected; showing selection modal');
+        await this.addLog('info', 'No page selected; showing selection modal', { jobId });
         // Show Notion page selection modal
         this.showNotionPageSelection(notes, platform);
       }
       
     } catch (error) {
       console.error('Error processing audio with Gemini:', error);
-      await this.addLog('error', 'Processing audio failed', { error: String(error) });
+      await this.addLog('error', 'Processing audio failed', { jobId, error: String(error) });
       this.showError('Failed to process meeting notes. Please try again.');
+      throw error;
     }
   }
 
-  base64ToBlob(base64, mimeType) {
-    const byteCharacters = atob(base64);
-    const byteNumbers = new Array(byteCharacters.length);
-    for (let i = 0; i < byteCharacters.length; i++) {
-      byteNumbers[i] = byteCharacters.charCodeAt(i);
+  async base64StringToBlob(base64String, mimeType) {
+    // Handle both data URLs and raw base64 strings
+    const base64 = base64String.includes(',') ? base64String.split(',')[1] : base64String;
+    
+    // Use FileReader for robust base64 decoding
+    const binaryString = atob(base64);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
     }
-    const byteArray = new Uint8Array(byteNumbers);
-    return new Blob([byteArray], { type: mimeType });
+    return new Blob([bytes], { type: mimeType });
   }
 
   async getNotionPages() {
@@ -964,6 +1395,29 @@ class MeetingNotesProcessor {
         });
       }
     });
+  }
+
+  async tryAcquireJob(jobId) {
+    try {
+      // Load latest from storage to avoid races between service worker instances
+      const { jobs } = await chrome.storage.local.get(['jobs']);
+      const list = Array.isArray(jobs) ? jobs : this.jobs;
+      const idx = list.findIndex(j => j.id === jobId);
+      if (idx === -1) return false;
+      const current = list[idx];
+      if (current.status !== 'queued' || current.startedAt) return false;
+      current.status = 'processing';
+      current.startedAt = Date.now();
+      current.updatedAt = Date.now();
+      // Mirror to memory list
+      const memIdx = this.jobs.findIndex(j => j.id === jobId);
+      if (memIdx !== -1) this.jobs[memIdx] = current; else this.jobs.push(current);
+      await chrome.storage.local.set({ jobs: list.slice(-this.maxJobs) });
+      await this.addLog('info', 'Job lock acquired', { jobId });
+      return true;
+    } catch (e) {
+      return false;
+    }
   }
 }
 
